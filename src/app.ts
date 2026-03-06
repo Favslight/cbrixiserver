@@ -1,5 +1,5 @@
 import Fastify, { fastify, FastifyReply, FastifyRequest } from "fastify";
-
+import multipart from "@fastify/multipart";
 import cors from "@fastify/cors";
 
 import { adminRoutes } from "./modules/admin/admin.route";
@@ -40,6 +40,12 @@ app.register(import("@fastify/jwt"), {
 app.decorate("adminAuthenticate", async function (request: FastifyRequest, reply: FastifyReply) {
   const payload = await request.adminJwt.verify(request);
   request.admin = payload;
+});
+
+app.register(multipart, {
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB max per document
+  },
 });
 
 app.register(adminRoutes);

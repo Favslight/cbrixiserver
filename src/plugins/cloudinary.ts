@@ -1,3 +1,4 @@
+// src/plugins/cloudinary.ts
 import { v2 as cloudinary } from "cloudinary";
 
 cloudinary.config({
@@ -6,4 +7,24 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_SECRET
 });
 
-export default cloudinary;
+export const uploadToCloudinary = async (file: Buffer) => {
+  return new Promise((resolve, reject) => {
+
+    cloudinary.uploader
+      .upload_stream(
+        {
+          folder: "cbrixi_products"
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      )
+      .end(file);
+
+  });
+};
+
+export const deleteFromCloudinary = async (publicId: string) => {
+  return cloudinary.uploader.destroy(publicId);
+};
