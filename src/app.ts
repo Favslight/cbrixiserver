@@ -4,6 +4,8 @@ import cors from "@fastify/cors";
 
 import { adminRoutes } from "./modules/admin/admin.route";
 import { productRoutes } from "./modules/products/product.routes";
+import { userAuthRoutes } from "./modules/userAuth/userAuth.route";
+import { cartRoutes } from "./modules/cart/cart.route";
 
 export const app = Fastify ({
     logger : true
@@ -44,9 +46,11 @@ app.decorate("adminAuthenticate", async function (request: FastifyRequest, reply
 
 app.register(multipart, {
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB max per document
+    fileSize: 20 * 1024 * 1024, // 20MB max per document
   },
 });
 
 app.register(adminRoutes);
 app.register(productRoutes);
+app.register(userAuthRoutes);
+app.register(cartRoutes);

@@ -22,4 +22,11 @@ declare module "fastify" {
       verify: (request: FastifyRequest) => Promise<any>;
     };
   }
+
+  interface FastifyRequest {
+    user?: {
+      id: string;
+      external_user_id: string;
+    };
+  }
 }
