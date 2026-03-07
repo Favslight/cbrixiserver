@@ -39,6 +39,21 @@ app.register(import("@fastify/jwt"), {
   namespace: "adminJwt"
 });
 
+app.decorate(
+  "authenticate",
+  async function (request: FastifyRequest, reply: FastifyReply) {
+    // Decode JWT and type it
+    const decoded = await request.jwtVerify<{ id: string; email?: string }>();
+
+    // Attach to request.user so routes can safely access it
+    request.user = {
+      id: decoded.id,
+      email: decoded.email ?? "",
+      isAdmin: false // optional, or fetch from DB if needed
+    };
+  }
+);
+
 app.decorate("adminAuthenticate", async function (request: FastifyRequest, reply: FastifyReply) {
   const payload = await request.adminJwt.verify(request);
   request.admin = payload;
