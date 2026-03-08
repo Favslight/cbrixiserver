@@ -39,7 +39,7 @@ app.register(import("@fastify/jwt"), {
   namespace: "adminJwt"
 });
 
-app.decorate(
+/*app.decorate(
   "authenticate",
   async function (request: FastifyRequest, reply: FastifyReply) {
     // Decode JWT and type it
@@ -52,7 +52,7 @@ app.decorate(
       isAdmin: false // optional, or fetch from DB if needed
     };
   }
-);
+);*/
 
 app.decorate("adminAuthenticate", async function (request: FastifyRequest, reply: FastifyReply) {
   const payload = await request.adminJwt.verify(request);
