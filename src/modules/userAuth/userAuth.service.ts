@@ -6,10 +6,15 @@ const KNOWRIST_API = "https://api.knowrist.com/auth/login";
 
 export const loginUser = async (email: string, password: string) => {
 
+  console.log("LOGIN PAYLOAD:", { email, password });
   // Step 1: call external API
   const response = await axios.post(KNOWRIST_API, {
     email,
     password
+  }, {
+    headers: {
+      "Content-Type": "application/json"
+    }
   });
 
   const externalUser = response.data.user;
