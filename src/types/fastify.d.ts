@@ -29,4 +29,11 @@ declare module "fastify" {
       external_user_id: string;
     };
   }
+
+  interface FastifyJWT {
+    user: {
+      id: string;
+      email: string;
+    };
+  }
 }

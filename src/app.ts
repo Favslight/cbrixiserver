@@ -33,13 +33,13 @@ app.register(cors, {
   allowedHeaders: ["Content-Type", "Authorization"]
 });
 
-//app.register(import("@fastify/jwt"), { secret: process.env.JWT_SECRET! });
+app.register(import("@fastify/jwt"), { secret: process.env.USER_JWT_SECRET! });
 app.register(import("@fastify/jwt"), {
   secret: process.env.JWT_SECRET!,
   namespace: "adminJwt"
 });
 
-/*app.decorate(
+app.decorate(
   "authenticate",
   async function (request: FastifyRequest, reply: FastifyReply) {
     // Decode JWT and type it
@@ -48,11 +48,10 @@ app.register(import("@fastify/jwt"), {
     // Attach to request.user so routes can safely access it
     request.user = {
       id: decoded.id,
-      email: decoded.email ?? "",
-      isAdmin: false // optional, or fetch from DB if needed
+      email: decoded.email ?? ""// optional, or fetch from DB if needed
     };
   }
-);*/
+);
 
 app.decorate("adminAuthenticate", async function (request: FastifyRequest, reply: FastifyReply) {
   const payload = await request.adminJwt.verify(request);
