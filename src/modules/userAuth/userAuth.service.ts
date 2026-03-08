@@ -8,55 +8,68 @@ const KNOWRIST_API = "https://api.knowrist.com/auth/login";
 export const loginUser = async (email: string, password: string) => {
 
   console.log("LOGIN PAYLOAD:", { email, password });
-  // Step 1: call external API
-  const response = await axios.post(KNOWRIST_API, {
-    email,
-    password
-  }, {
-    headers: {
-      "Content-Type": "application/json"
-    }
-  });
+
+  const response = await axios.post(
+    KNOWRIST_API,
+    { email, password },
+    { headers: { "Content-Type": "application/json" } }
+  );
 
   console.log("KNOWRIST RESPONSE:", response.data);
 
-  const externalUser = response.data.user;
+  const knowristToken = response.data.token;
 
-  if (!externalUser) {
+  const profileResponse = await axios.get(
+  "https://api.knowrist.com/auth/profile",
+  {
+    headers: {
+      Authorization: `Bearer ${knowristToken}`
+    }
+  }
+);
+
+const externalUser = profileResponse.data;
+
+  if (!knowristToken) {
     throw new Error("Invalid credentials");
   }
 
-  const externalId = externalUser.id;
+  // decode knowrist token
+  const decoded: any = jwt.decode(knowristToken);
 
-  // Step 2: check if user exists locally
+  const externalId = decoded.id;
+
+  if (!externalId) {
+    throw new Error("Invalid user data");
+  }
+
+  // check local user
   let user = await pool.query(
-    `SELECT * FROM users WHERE external_user_id=$1`,
-    [externalId]
+  `SELECT * FROM users WHERE external_user_id=$1`,
+  [externalId]
+);
+
+if (!user.rows[0]) {
+
+  user = await pool.query(
+    `
+    INSERT INTO users
+    (external_user_id, firstname, lastname, email)
+    VALUES ($1,$2,$3,$4)
+    RETURNING *
+    `,
+    [
+      externalId,
+      externalUser.name,
+      externalUser.username,
+      externalUser.email
+    ]
   );
 
-  // Step 3: create local user if not exists
-  if (!user.rows[0]) {
-
-    user = await pool.query(
-      `
-      INSERT INTO users
-      (external_user_id, firstname, lastname, email)
-      VALUES ($1,$2,$3,$4)
-      RETURNING *
-      `,
-      [
-        externalId,
-        externalUser.firstname,
-        externalUser.lastname,
-        externalUser.email
-      ]
-    );
-
-  }
+}
 
   const localUser = user.rows[0];
 
-  // Step 4: create store token
   const token = jwt.sign(
     {
       id: localUser.id,
