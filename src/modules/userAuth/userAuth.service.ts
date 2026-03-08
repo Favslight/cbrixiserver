@@ -1,3 +1,4 @@
+// src/modules/userAuth/userAuth.service.ts
 import axios from "axios";
 import jwt from "jsonwebtoken";
 import { pool } from "../../config/db";
@@ -16,6 +17,8 @@ export const loginUser = async (email: string, password: string) => {
       "Content-Type": "application/json"
     }
   });
+
+  console.log("KNOWRIST RESPONSE:", response.data);
 
   const externalUser = response.data.user;
 

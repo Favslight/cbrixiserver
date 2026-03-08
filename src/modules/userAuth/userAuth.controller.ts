@@ -10,7 +10,7 @@ export const loginController = async (
 
   const result = await loginUser(email, password);
 
-  console.log("KNOWRIST RESPONSE:", result);
+
   return reply.send({
     success: true,
     ...result
