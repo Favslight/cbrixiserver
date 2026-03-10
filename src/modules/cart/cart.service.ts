@@ -56,7 +56,7 @@ export const addToCart = async (
   return result.rows[0];
 };
 
-// src/modules/cart/cart.service.ts
+
 export const getCart = async (userId: string) => {
   const result = await pool.query(
     `

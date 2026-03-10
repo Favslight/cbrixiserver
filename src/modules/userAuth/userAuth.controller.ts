@@ -1,3 +1,4 @@
+// src/modules/userAuth/userAuth.controller.ts
 import { FastifyRequest, FastifyReply } from "fastify";
 import { loginUser } from "./userAuth.service";
 

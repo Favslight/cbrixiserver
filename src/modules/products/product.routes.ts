@@ -19,5 +19,5 @@ export async function productRoutes(app: FastifyInstance) {
   deleteProductController
 );
 
-    app.get("/products", getPublicProductsController);
+    app.get("/products",  getPublicProductsController);
 };
