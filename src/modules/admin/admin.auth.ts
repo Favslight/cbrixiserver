@@ -19,7 +19,7 @@ export const requireAdmin = async (
     // ✅ Make sure you're using ADMIN_JWT_SECRET
     const payload = jwt.verify(
       token,
-      process.env.ADMIN_JWT_SECRET! // Should be different from user secret
+      process.env.JWT_SECRET! // Should be different from user secret
     ) as {
       id: string;
       role: "ADMIN" | "MAIN_ADMIN" | "SUPER_ADMIN";

@@ -1,3 +1,4 @@
+// src/modules/cart/cart.service.ts
 import { pool } from "../../config/db";
 
 export const addToCart = async (
@@ -55,16 +56,21 @@ export const addToCart = async (
   return result.rows[0];
 };
 
+// src/modules/cart/cart.service.ts
 export const getCart = async (userId: string) => {
-
   const result = await pool.query(
     `
     SELECT
       cart_items.id,
+      cart_items.product_id,
+      cart_items.quantity,
       products.name,
       products.price,
       products.image_url,
-      cart_items.quantity
+      products.installment_enabled,
+      products.installment_duration_months,
+      products.minimum_deposit_percentage,
+      products.minimum_wallet_balance_required
     FROM carts
     JOIN cart_items ON carts.id = cart_items.cart_id
     JOIN products ON products.id = cart_items.product_id
@@ -84,4 +90,44 @@ export const removeCartItem = async (itemId: string) => {
   );
 
   return result.rows[0];
+};
+
+export const updateCartItemQuantity = async (
+  itemId: string,
+  quantity: number
+) => {
+
+  if (quantity <= 0) {
+    throw new Error("Quantity must be greater than zero");
+  }
+
+  const item = await pool.query(
+    `
+    SELECT cart_items.id, products.stock
+    FROM cart_items
+    JOIN products ON products.id = cart_items.product_id
+    WHERE cart_items.id=$1
+    `,
+    [itemId]
+  );
+
+  if (!item.rows[0]) {
+    throw new Error("Cart item not found");
+  }
+
+  if (item.rows[0].stock < quantity) {
+    throw new Error("Insufficient stock");
+  }
+
+  const updated = await pool.query(
+    `
+    UPDATE cart_items
+    SET quantity=$1
+    WHERE id=$2
+    RETURNING *
+    `,
+    [quantity, itemId]
+  );
+
+  return updated.rows[0];
 };

@@ -1,8 +1,10 @@
+// src/modules/cart/cart.route.ts
 import { FastifyInstance } from "fastify";
 import {
   addToCartController,
   getCartController,
-  removeCartItemController
+  removeCartItemController,
+  updateCartItemController
 } from "./cart.controller";
 import { requireUser } from "../auth/user.auth";
 
@@ -25,5 +27,14 @@ export const cartRoutes = async (app: FastifyInstance) => {
     { preHandler: [requireUser] },
     removeCartItemController
   );
+
+  app.patch<{
+  Params: { itemId: string };
+  Body: { quantity: number };
+}>(
+  "/cart/item/:itemId",
+  { preHandler: [requireUser] },
+  updateCartItemController
+);
 
 };
