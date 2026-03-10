@@ -10,7 +10,7 @@ export const createProduct = async (data: any) => {
  installment_duration_months, fine_percentage_on_default,
  minimum_wallet_balance_required, grace_period_days)
   VALUES
-  ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+  ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
   RETURNING *
   `;
 
