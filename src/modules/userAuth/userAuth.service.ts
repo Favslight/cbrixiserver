@@ -1,5 +1,5 @@
 // src/modules/userAuth/userAuth.service.ts
-import axios from "axios";
+/*import axios from "axios";
 import jwt from "jsonwebtoken";
 import { pool } from "../../config/db";
 
@@ -83,4 +83,4 @@ if (!user.rows[0]) {
     token,
     user: localUser
   };
-};
+};*/

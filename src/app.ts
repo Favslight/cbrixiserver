@@ -4,12 +4,13 @@ import cors from "@fastify/cors";
 
 import { adminRoutes } from "./modules/admin/admin.route";
 import { productRoutes } from "./modules/products/product.routes";
-import { userAuthRoutes } from "./modules/userAuth/userAuth.route";
+//import { userAuthRoutes } from "./modules/userAuth/userAuth.route";
 import { cartRoutes } from "./modules/cart/cart.route";
 import { checkoutRoutes } from "./modules/checkout/checkout.route";
 import { paymentRoutes } from "./modules/payments/payment.route";
 import { adminPaymentRoutes } from "./modules/admin/admin.payment.routes";
 import { startInstallmentReminderJob } from "./modules/email/email.scheduler";
+import { authRoutes } from "./modules/auth/auth.route";
 
 startInstallmentReminderJob();
 
@@ -72,8 +73,9 @@ app.register(multipart, {
 
 app.register(adminRoutes);
 app.register(productRoutes);
-app.register(userAuthRoutes);
+//app.register(userAuthRoutes);
 app.register(cartRoutes);
 app.register(checkoutRoutes, { prefix: "/order" });
+app.register(authRoutes, { prefix: "/user" });
 app.register(paymentRoutes);
 app.register(adminPaymentRoutes);

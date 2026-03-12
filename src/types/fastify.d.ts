@@ -18,6 +18,16 @@ declare module "fastify" {
     }
 
     interface FastifyRequest {
+    user: {
+      id: string;
+      firstname: string;
+      lastname: string;
+      username: string;
+      email: string;
+    };
+  }
+
+    interface FastifyRequest {
     adminJwt: {
       verify: (request: FastifyRequest) => Promise<any>;
     };
@@ -29,7 +39,9 @@ declare module "fastify" {
       external_user_id: string;
     };
   }
+}
 
+declare module "@fastify/jwt" {
   interface FastifyJWT {
     user: {
       id: string;

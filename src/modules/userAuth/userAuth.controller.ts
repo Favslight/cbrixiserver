@@ -1,5 +1,5 @@
 // src/modules/userAuth/userAuth.controller.ts
-import { FastifyRequest, FastifyReply } from "fastify";
+/*import { FastifyRequest, FastifyReply } from "fastify";
 import { loginUser } from "./userAuth.service";
 
 export const loginController = async (
@@ -17,4 +17,4 @@ export const loginController = async (
     ...result
   });
 
-};
+};*/
