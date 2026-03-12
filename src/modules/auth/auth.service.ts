@@ -20,8 +20,6 @@ export const signupUser = async (payload: {
   email: string;
   password: string;
   username: string;
-  //referralCode?: string;
-  //proofText?: string;
 }) => {
   const { firstname, lastname, username, email, password } = payload;
   const passwordHash = await hashPassword(password);

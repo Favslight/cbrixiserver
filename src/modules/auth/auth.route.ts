@@ -1,5 +1,5 @@
 import { FastifyInstance } from "fastify";
-import { signupUser, loginUser, updateUserProfile, getUserById } from "./auth.service";
+import { signupUser, loginUser, updateUserProfile, getUserById, logoutUser } from "./auth.service";
 
 export const authRoutes = async (app: FastifyInstance) => {
 
@@ -48,6 +48,14 @@ app.put(
       message: "Profile updated successfully",
       user: updatedUser
     });
+  }
+);
+
+app.post(
+  "/logout",
+  { preHandler: [app.authenticate] },
+  async () => {
+    return logoutUser();
   }
 );
 }
