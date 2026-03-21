@@ -7,32 +7,27 @@ import { EmailType } from "../email/email.types";
 
 import axios from "axios";
 
-const KNOWRIST_API = "https://api.knowrist.com/wallet";
+/*const KNOWRIST_API = "https://api.knowrist.com/wallet";
 
 export const fetchWalletBalance = async (externalUserId: string, token: string) => {
   const res = await axios.get(`${KNOWRIST_API}?user_id=${externalUserId}`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   return res.data;
-};
+};*/
 
 export const createOrderFromCart = async (
   user: any,
   paymentMode: "FULL" | "INSTALLMENT",
-  token: string
+  token: string,
+  externalEmail: string | null
 ) => {
   const cartItems = await getCart(user.id);
   if (!cartItems.length) throw new Error("Cart is empty");
 
-  if (paymentMode === "INSTALLMENT") {
-    //const settings = await getSettings();
-    const walletBalance = await fetchWalletBalance(user.external_user_id, token);
-    for (const item of cartItems) {
-    if (walletBalance < Number(item.minimum_wallet_balance_required)) {
-      throw new Error(`Wallet balance must be at least ${item.minimum_wallet_balance_required}`);
-    }
-    }
-  }
+  if (paymentMode === "INSTALLMENT" && !externalEmail) {
+  throw new Error("External email is required for installment");
+}
 
   let totalAmount = 0;
   cartItems.forEach(item => totalAmount += Number(item.price) * item.quantity);
@@ -40,11 +35,15 @@ export const createOrderFromCart = async (
   let depositAmount = paymentMode === "INSTALLMENT" ? totalAmount * 0.5 : totalAmount;
   let remainingBalance = totalAmount - depositAmount;
 
+  const status = paymentMode === "INSTALLMENT"
+  ? "AWAITING_APPROVAL"
+  : "PENDING";
+
   // Create order
   const orderRes = await pool.query(`
-    INSERT INTO orders (user_id, total_amount, deposit_amount, remaining_balance, payment_mode, status)
-    VALUES ($1,$2,$3,$4,$5,$6) RETURNING *
-  `, [user.id, totalAmount, depositAmount, remainingBalance, paymentMode, "PENDING"]);
+    INSERT INTO orders (user_id, total_amount, deposit_amount, remaining_balance, payment_mode, status, external_email)
+    VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *
+  `, [user.id, totalAmount, depositAmount, remainingBalance, paymentMode, status, externalEmail]);
 
   const order = orderRes.rows[0];
 
@@ -78,7 +77,7 @@ export const createOrderFromCart = async (
   null,
   user.email,
   "Order Created",
-  orderCreatedTemplate(user.name, order.total_amount),
+  orderCreatedTemplate(user.firstname, order.total_amount),
   EmailType.ORDER_CREATED
 );
 

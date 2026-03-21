@@ -15,6 +15,19 @@ export const initiatePaystackPayment = async (
 
   const reference = await generateInvoiceNumber();
 
+  const orderRes = await pool.query(
+  `SELECT status FROM orders WHERE id=$1`,
+  [orderId]
+);
+
+const order = orderRes.rows[0];
+
+if (!order) throw new Error("Order not found");
+
+if (order.status === "AWAITING_APPROVAL") {
+  throw new Error("Your installment request is pending admin approval");
+}
+
   const txn = await pool.query(`
   INSERT INTO payment_transactions
   (order_id, installment_id, user_id, amount, payment_method, reference, status)

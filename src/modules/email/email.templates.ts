@@ -1,5 +1,5 @@
-export const orderCreatedTemplate = (name: string, amount: number) => `
-Hello ${name},
+export const orderCreatedTemplate = (firstname: string, amount: number) => `
+Hello ${firstname},
 
 Your order has been created successfully.
 
@@ -8,16 +8,33 @@ Total Order Amount: ₦${amount}
 Thank you.
 `;
 
-export const paymentSuccessTemplate = (name: string, amount: number) => `
-Hello ${name},
+export const orderApprovedTemplate = (firstname: string, amount: number) => `
+Hello ${firstname},
+Your order has been approved by our admin team.
+
+Total Order Amount: ₦${amount}
+
+Thank you.
+`;
+
+export const orderRejectedTemplate = (firstname: string) => `
+Hello ${firstname},
+We regret to inform you that your order has been rejected by our admin team.
+
+Please contact support for more information.
+`;
+
+
+export const paymentSuccessTemplate = (firstname: string, amount: number) => `
+Hello ${firstname},
 
 Your payment of ₦${amount} was received successfully.
 
 Thank you for your payment.
 `;
 
-export const invoiceTemplate = (name: string, invoice: string, amount: number) => `
-Hello ${name},
+export const invoiceTemplate = (firstname: string, invoice: string, amount: number) => `
+Hello ${firstname},
 
 Please make a bank transfer using the following details.
 
