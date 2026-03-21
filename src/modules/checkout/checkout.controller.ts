@@ -5,9 +5,9 @@ export const checkoutController = async (req: FastifyRequest, reply: FastifyRepl
   try {
     const user: any = req.user;
     const { payment_mode } = req.body as any; // "FULL" | "INSTALLMENT"
-    const token = req.headers.authorization?.split(" ")[1]; // user's Knowrist token
+    const externalEmail = req.body as any;
 
-    const order = await createOrderFromCart(user, payment_mode, token!);
+    const order = await createOrderFromCart(user, payment_mode, externalEmail);
 
     return reply.send({ success: true, order });
 

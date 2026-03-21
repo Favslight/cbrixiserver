@@ -19,7 +19,6 @@ export const fetchWalletBalance = async (externalUserId: string, token: string) 
 export const createOrderFromCart = async (
   user: any,
   paymentMode: "FULL" | "INSTALLMENT",
-  token: string,
   externalEmail: string | null
 ) => {
   const cartItems = await getCart(user.id);
