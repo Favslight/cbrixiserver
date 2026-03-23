@@ -34,7 +34,7 @@ export const getAllUsersDetailsController = async (
   reply: FastifyReply
 ) => {
   try {
-    const usersRes = await pool.query(`SELECT id, name, username, email, external_user_id, status, created_at FROM users ORDER BY created_at DESC`);
+    const usersRes = await pool.query(`SELECT id, firstname, lastname, email, status, created_at FROM users ORDER BY created_at DESC`);
     const users = usersRes.rows;
 
     // Fetch orders, order items, installments for each user

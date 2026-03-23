@@ -7,14 +7,6 @@ import { EmailType } from "../email/email.types";
 
 import axios from "axios";
 
-/*const KNOWRIST_API = "https://api.knowrist.com/wallet";
-
-export const fetchWalletBalance = async (externalUserId: string, token: string) => {
-  const res = await axios.get(`${KNOWRIST_API}?user_id=${externalUserId}`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  return res.data;
-};*/
 
 export const createOrderFromCart = async (
   user: any,
