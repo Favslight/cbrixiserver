@@ -23,7 +23,7 @@ jobs:
         with:
           host: ${{ secrets.VPS_HOST }}
           username: root
-          key: ${{ secrets.Cbrixi_secret_key }}
+          key: ${{ secrets.CBRIXI_SECRET_KEY }}
           script: |
             cd /root/Cbrixiserver
             git fetch --all
