@@ -25,9 +25,9 @@ jobs:
           username: root
           key: ${{ secrets.CBRIXI_SECRET_KEY }}
           script: |
-            cd /root/cbx/cbrixiserver
+            cd /root/cbx/cserver/cbrixiserver
             git fetch --all
             git reset --hard origin/main
             npm install
             npm run build
-            pm2 restart cbrixiserver || pm2 start dist/server.js --name cbrixiserver
+            pm2 restart cbxserver || pm2 start dist/server.js --name cbxserver
