@@ -1,4 +1,4 @@
-name: Deploy Cbrixi backend
+name: Deploy Cbrixi backend to Vps
 
 on:
   push:
