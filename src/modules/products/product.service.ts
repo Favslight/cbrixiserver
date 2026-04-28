@@ -2,15 +2,34 @@
 import { pool } from "../../config/db";
 import { deleteFromCloudinary } from "../../plugins/cloudinary";
 
+let ensureProductColumnsPromise: Promise<void> | null = null;
+
+const ensureProductColumns = async () => {
+  if (!ensureProductColumnsPromise) {
+    ensureProductColumnsPromise = (async () => {
+      await pool.query(`
+        ALTER TABLE products
+        ADD COLUMN IF NOT EXISTS image_urls TEXT[] DEFAULT ARRAY[]::TEXT[],
+        ADD COLUMN IF NOT EXISTS image_public_ids TEXT[] DEFAULT ARRAY[]::TEXT[]
+      `);
+    })();
+  }
+
+  await ensureProductColumnsPromise;
+};
+
 export const createProduct = async (data: any) => {
+  await ensureProductColumns();
+
   const query = `
   INSERT INTO products
 (name, description, category, price, image_url, image_public_id,
+ image_urls, image_public_ids,
  stock, installment_enabled, minimum_deposit_percentage,
  installment_duration_months, fine_percentage_on_default,
  minimum_wallet_balance_required, grace_period_days)
   VALUES
-  ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+  ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
   RETURNING *
   `;
 
@@ -21,6 +40,8 @@ export const createProduct = async (data: any) => {
     data.price,
     data.image_url,
     data.image_public_id,
+    data.image_urls,
+    data.image_public_ids,
     data.stock,
     data.installment_enabled,
     data.minimum_deposit_percentage,
@@ -36,9 +57,14 @@ export const createProduct = async (data: any) => {
 };
 
 export const getAllProducts = async () => {
+  await ensureProductColumns();
 
   const result = await pool.query(`
-    SELECT * FROM products
+    SELECT *,
+           COALESCE(image_urls, ARRAY[]::TEXT[]) AS image_urls,
+           COALESCE(image_public_ids, ARRAY[]::TEXT[]) AS image_public_ids
+    FROM products
+    WHERE is_active = true
     ORDER BY created_at DESC
   `);
 
@@ -47,10 +73,11 @@ export const getAllProducts = async () => {
 };
 
 export const deleteProduct = async (id: string) => {
+  await ensureProductColumns();
 
   // get product first
   const product = await pool.query(
-    `SELECT image_public_id FROM products WHERE id=$1`,
+    `SELECT image_public_id, image_public_ids FROM products WHERE id=$1`,
     [id]
   );
 
@@ -58,16 +85,28 @@ export const deleteProduct = async (id: string) => {
     throw new Error("Product not found");
   }
 
-  const publicId = product.rows[0].image_public_id;
+  const legacyPublicId = product.rows[0].image_public_id;
+  const galleryPublicIds: string[] = Array.isArray(product.rows[0].image_public_ids)
+    ? product.rows[0].image_public_ids
+    : [];
+  const allPublicIds = [...new Set([legacyPublicId, ...galleryPublicIds].filter(Boolean))];
 
   // delete from cloudinary
-  if (publicId) {
-    await deleteFromCloudinary(publicId);
+  for (const publicId of allPublicIds) {
+    try {
+      await deleteFromCloudinary(publicId);
+    } catch (error) {
+      // Keep product deletion resilient even if cloudinary cleanup fails.
+      console.error(`Failed to delete Cloudinary image ${publicId}`, error);
+    }
   }
 
-  // delete from DB
+  // soft-delete in DB to avoid FK failures from existing order/cart references
   const result = await pool.query(
-    `DELETE FROM products WHERE id=$1 RETURNING *`,
+    `UPDATE products
+     SET is_active=false, updated_at=NOW()
+     WHERE id=$1
+     RETURNING *`,
     [id]
   );
 
@@ -105,9 +144,17 @@ export const updateProduct = async (id: string, data: any) => {
 
 
 export const getActiveProducts = async () => {
+  await ensureProductColumns();
 
   const result = await pool.query(`
-    SELECT id,name,description,category,price,image_url,stock
+    SELECT id,
+           name,
+           description,
+           category,
+           price,
+           image_url,
+           COALESCE(image_urls, ARRAY[]::TEXT[]) AS image_urls,
+           stock
     FROM products
     WHERE is_active = true
   `);

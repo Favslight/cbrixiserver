@@ -114,3 +114,7 @@ CREATE INDEX idx_orders_status ON orders(status);
 CREATE INDEX idx_installments_due_date ON installments(due_date);
 CREATE INDEX idx_installments_status ON installments(status);
 CREATE INDEX idx_default_events_processed ON default_events(processed);
+
+ALTER TABLE products
+ADD COLUMN IF NOT EXISTS image_urls TEXT[] DEFAULT ARRAY[]::TEXT[],
+ADD COLUMN IF NOT EXISTS image_public_ids TEXT[] DEFAULT ARRAY[]::TEXT[];
