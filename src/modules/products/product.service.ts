@@ -1,6 +1,5 @@
 // src/modules/products/product.service.ts
 import { pool } from "../../config/db";
-import { deleteFromCloudinary } from "../../plugins/cloudinary";
 
 let ensureProductColumnsPromise: Promise<void> | null = null;
 
@@ -83,22 +82,6 @@ export const deleteProduct = async (id: string) => {
 
   if (!product.rows[0]) {
     throw new Error("Product not found");
-  }
-
-  const legacyPublicId = product.rows[0].image_public_id;
-  const galleryPublicIds: string[] = Array.isArray(product.rows[0].image_public_ids)
-    ? product.rows[0].image_public_ids
-    : [];
-  const allPublicIds = [...new Set([legacyPublicId, ...galleryPublicIds].filter(Boolean))];
-
-  // delete from cloudinary
-  for (const publicId of allPublicIds) {
-    try {
-      await deleteFromCloudinary(publicId);
-    } catch (error) {
-      // Keep product deletion resilient even if cloudinary cleanup fails.
-      console.error(`Failed to delete Cloudinary image ${publicId}`, error);
-    }
   }
 
   // soft-delete in DB to avoid FK failures from existing order/cart references
