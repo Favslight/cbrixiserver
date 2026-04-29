@@ -15,7 +15,8 @@ import { authRoutes } from "./modules/auth/auth.route";
 startInstallmentReminderJob();
 
 export const app = Fastify ({
-    logger : true
+    logger : true,
+    bodyLimit: 100 * 1024 * 1024
 });
 
 app.addContentTypeParser(
@@ -33,10 +34,28 @@ app.addContentTypeParser(
   }
 );
 
+const allowedOrigins = new Set([
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "https://api.cbrixi.com"
+]);
+
 app.register(cors, {
-  origin: "*",
+  origin: (origin, cb) => {
+    if (!origin) {
+      cb(null, true);
+      return;
+    }
+
+    if (allowedOrigins.has(origin)) {
+      cb(null, true);
+      return;
+    }
+
+    cb(new Error("Not allowed by CORS"), false);
+  },
   credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
 });
 
@@ -67,8 +86,10 @@ app.decorate("adminAuthenticate", async function (request: FastifyRequest, reply
 
 app.register(multipart, {
   limits: {
-    fileSize: 20 * 1024 * 1024, // 20MB max per document
-  },
+    fileSize: 40 * 1024 * 1024, // 40MB max per image
+    files: 4,
+    parts: 30
+  }
 });
 
 app.register(adminRoutes);
