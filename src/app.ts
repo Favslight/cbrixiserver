@@ -40,6 +40,44 @@ const allowedOrigins = new Set([
   "https://api.cbrixi.com"
 ]);
 
+const configuredOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+for (const origin of configuredOrigins) {
+  allowedOrigins.add(origin);
+}
+
+if (process.env.FRONTEND_URL) {
+  try {
+    allowedOrigins.add(new URL(process.env.FRONTEND_URL).origin);
+  } catch {
+    app.log.warn("FRONTEND_URL is not a valid URL. Skipping CORS origin auto-allow.");
+  }
+}
+
+const allowedDomainSuffixes = [".cbrixi.com", ".afresh.center"];
+
+const isAllowedOrigin = (origin: string) => {
+  if (allowedOrigins.has(origin)) {
+    return true;
+  }
+
+  try {
+    const parsedOrigin = new URL(origin);
+    const hostname = parsedOrigin.hostname.toLowerCase();
+
+    if (hostname === "localhost" || hostname === "127.0.0.1") {
+      return true;
+    }
+
+    return allowedDomainSuffixes.some((suffix) => hostname.endsWith(suffix));
+  } catch {
+    return false;
+  }
+};
+
 app.register(cors, {
   origin: (origin, cb) => {
     if (!origin) {
@@ -47,7 +85,7 @@ app.register(cors, {
       return;
     }
 
-    if (allowedOrigins.has(origin)) {
+    if (isAllowedOrigin(origin)) {
       cb(null, true);
       return;
     }
