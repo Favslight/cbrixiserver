@@ -51,7 +51,6 @@ export const createProduct = async (data: any) => {
   ];
 
   const result = await pool.query(query, values);
-
   return result.rows[0];
 };
 
@@ -68,7 +67,6 @@ export const getAllProducts = async () => {
   `);
 
   return result.rows;
-
 };
 
 export const deleteProduct = async (id: string) => {
@@ -151,11 +149,9 @@ export const updateProduct = async (id: string, data: any) => {
   ];
 
   const result = await pool.query(query, values);
-
   return result.rows[0];
 
 };
-
 
 export const getActiveProducts = async () => {
   await ensureProductColumns();
