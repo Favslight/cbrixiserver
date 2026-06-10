@@ -42,7 +42,16 @@ export const getAllUsersDetailsController = async (
 
     for (const user of users) {
       const ordersRes = await pool.query(
-        `SELECT * FROM orders WHERE user_id=$1 ORDER BY created_at DESC`,
+        `
+        SELECT
+          orders.*,
+          verified_user.id AS verified_user_id,
+          (verified_user.id IS NOT NULL) AS external_email_exists
+        FROM orders
+        LEFT JOIN users verified_user ON LOWER(verified_user.email) = LOWER(orders.external_email)
+        WHERE orders.user_id=$1
+        ORDER BY orders.created_at DESC
+        `,
         [user.id]
       );
       const orders = ordersRes.rows;
@@ -63,9 +72,29 @@ export const getAllUsersDetailsController = async (
           [order.id]
         );
         const installments = installmentsRes.rows;
+        const totalAmount = Number(order.total_amount);
+        const remainingBalance = Number(order.remaining_balance ?? 0);
+        const depositAmount = Number(order.deposit_amount ?? 0);
+        const paidAmount = Math.max(totalAmount - remainingBalance, 0);
+        const nextInstallment = installments.find((installment) => installment.status === "PENDING") ?? null;
+        const depositRemaining = Math.max(depositAmount - paidAmount, 0);
+        const isAwaitingApproval = order.status === "AWAITING_APPROVAL";
+        const isRejected = order.status === "REJECTED";
+        const isPaid = remainingBalance <= 0 || order.status === "PAID";
 
         detailedOrders.push({
           ...order,
+          paid_amount: paidAmount,
+          payment_progress_percentage: totalAmount > 0 ? Math.round((paidAmount / totalAmount) * 100) : 0,
+          next_payment_amount: isAwaitingApproval || isRejected || isPaid
+            ? 0
+            : order.payment_mode === "INSTALLMENT" && depositRemaining > 0
+              ? depositRemaining
+              : nextInstallment
+                ? Number(nextInstallment.amount)
+                : remainingBalance,
+          next_payment_due_date: nextInstallment?.due_date ?? null,
+          can_pay: !isAwaitingApproval && !isRejected && !isPaid && remainingBalance > 0,
           order_items: orderItems,
           installments
         });

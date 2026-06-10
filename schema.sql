@@ -49,6 +49,7 @@ CREATE TABLE orders (
     remaining_balance NUMERIC(15,2),
     payment_mode VARCHAR(20) NOT NULL, -- FULL / INSTALLMENT
     status VARCHAR(30) NOT NULL, 
+    external_email VARCHAR(150),
     installment_end_date TIMESTAMP,
     defaulted_at TIMESTAMP,
     fine_applied BOOLEAN DEFAULT FALSE,
@@ -111,6 +112,7 @@ CREATE TABLE email_logs (
 
 CREATE INDEX idx_orders_user_id ON orders(user_id);
 CREATE INDEX idx_orders_status ON orders(status);
+CREATE INDEX idx_orders_external_email ON orders(external_email);
 CREATE INDEX idx_installments_due_date ON installments(due_date);
 CREATE INDEX idx_installments_status ON installments(status);
 CREATE INDEX idx_default_events_processed ON default_events(processed);
@@ -118,3 +120,8 @@ CREATE INDEX idx_default_events_processed ON default_events(processed);
 ALTER TABLE products
 ADD COLUMN IF NOT EXISTS image_urls TEXT[] DEFAULT ARRAY[]::TEXT[],
 ADD COLUMN IF NOT EXISTS image_public_ids TEXT[] DEFAULT ARRAY[]::TEXT[];
+
+ALTER TABLE orders
+ADD COLUMN IF NOT EXISTS external_email VARCHAR(150);
+
+CREATE INDEX IF NOT EXISTS idx_orders_external_email ON orders(external_email);

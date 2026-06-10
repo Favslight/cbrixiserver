@@ -5,26 +5,53 @@ import { sendEmail } from "../email/email.service";
 import { orderCreatedTemplate } from "../email/email.templates";
 import { EmailType } from "../email/email.types";
 
-import axios from "axios";
-
-
 export const createOrderFromCart = async (
   user: any,
   paymentMode: "FULL" | "INSTALLMENT",
   externalEmail: string | null
 ) => {
+  const userRes = await pool.query(
+    `SELECT id, firstname, lastname, email FROM users WHERE id=$1`,
+    [user.id]
+  );
+  const currentUser = userRes.rows[0];
+
+  if (!currentUser) throw new Error("User not found");
+
   const cartItems = await getCart(user.id);
   if (!cartItems.length) throw new Error("Cart is empty");
 
-  if (paymentMode === "INSTALLMENT" && !externalEmail) {
-  throw new Error("External email is required for installment");
-}
+  if (!["FULL", "INSTALLMENT"].includes(paymentMode)) {
+    throw new Error("Invalid payment mode");
+  }
 
-  let totalAmount = 0;
-  cartItems.forEach(item => totalAmount += Number(item.price) * item.quantity);
+  const normalizedExternalEmail = externalEmail?.trim().toLowerCase() || null;
 
-  let depositAmount = paymentMode === "INSTALLMENT" ? totalAmount * 0.5 : totalAmount;
-  let remainingBalance = totalAmount - depositAmount;
+  if (paymentMode === "INSTALLMENT" && !normalizedExternalEmail) {
+    throw new Error("Cbrilliance email is required for installment");
+  }
+
+  if (paymentMode === "INSTALLMENT") {
+    const nonInstallmentItem = cartItems.find((item) => !item.installment_enabled);
+    if (nonInstallmentItem) {
+      throw new Error(`${nonInstallmentItem.name} is not available for installment payment`);
+    }
+  }
+
+  const totalAmount = cartItems.reduce(
+    (sum, item) => sum + Number(item.price) * item.quantity,
+    0
+  );
+
+  const depositAmount = paymentMode === "INSTALLMENT"
+    ? cartItems.reduce((sum, item) => {
+        const lineTotal = Number(item.price) * item.quantity;
+        const depositPercentage = Number(item.minimum_deposit_percentage ?? 50);
+        return sum + (lineTotal * depositPercentage) / 100;
+      }, 0)
+    : totalAmount;
+
+  const remainingBalance = totalAmount - depositAmount;
 
   const status = paymentMode === "INSTALLMENT"
   ? "AWAITING_APPROVAL"
@@ -34,7 +61,7 @@ export const createOrderFromCart = async (
   const orderRes = await pool.query(`
     INSERT INTO orders (user_id, total_amount, deposit_amount, remaining_balance, payment_mode, status, external_email)
     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *
-  `, [user.id, totalAmount, depositAmount, remainingBalance, paymentMode, status, externalEmail]);
+  `, [currentUser.id, totalAmount, depositAmount, remainingBalance, paymentMode, status, normalizedExternalEmail]);
 
   const order = orderRes.rows[0];
 
@@ -44,31 +71,32 @@ export const createOrderFromCart = async (
       INSERT INTO order_items (order_id, product_id, quantity, price_at_purchase)
       VALUES ($1,$2,$3,$4)
     `, [order.id, item.product_id, item.quantity, item.price]);
+  }
 
-    // Only create installments if payment mode is INSTALLMENT
-    if (paymentMode === "INSTALLMENT") {
-      const months = item.installment_duration_months || 1; // fallback to 1 month if not set
-      const installmentAmount = (item.price * item.quantity) / months;
+  if (paymentMode === "INSTALLMENT" && remainingBalance > 0) {
+    const months = Math.max(
+      ...cartItems.map((item) => Number(item.installment_duration_months || 1))
+    );
+    const installmentAmount = remainingBalance / months;
 
-      for (let i = 1; i <= months; i++) {
-        const dueDate = new Date();
-        dueDate.setMonth(dueDate.getMonth() + i);
+    for (let i = 1; i <= months; i++) {
+      const dueDate = new Date();
+      dueDate.setMonth(dueDate.getMonth() + i);
 
-        await pool.query(`
-          INSERT INTO installments (order_id, installment_number, amount, due_date)
-          VALUES ($1,$2,$3,$4)
-        `, [order.id, i, installmentAmount, dueDate]);
-      }
+      await pool.query(`
+        INSERT INTO installments (order_id, installment_number, amount, due_date)
+        VALUES ($1,$2,$3,$4)
+      `, [order.id, i, installmentAmount, dueDate]);
     }
   }
 
   await sendEmail(
-  user.id,
+  currentUser.id,
   order.id,
   null,
-  user.email,
+  currentUser.email,
   "Order Created",
-  orderCreatedTemplate(user.firstname, order.total_amount),
+  orderCreatedTemplate(currentUser.firstname, order.total_amount, order.payment_mode, order.deposit_amount),
   EmailType.ORDER_CREATED
 );
 
@@ -79,4 +107,98 @@ export const createOrderFromCart = async (
   )
 
   return {order, cartItems};
+};
+
+export const getUserOrders = async (userId: string) => {
+  const ordersRes = await pool.query(
+    `
+    SELECT
+      orders.*,
+      users.email AS user_email,
+      users.firstname,
+      users.lastname
+    FROM orders
+    JOIN users ON users.id = orders.user_id
+    WHERE orders.user_id = $1
+    ORDER BY orders.created_at DESC
+    `,
+    [userId]
+  );
+
+  const orders = [];
+
+  for (const order of ordersRes.rows) {
+    const itemsRes = await pool.query(
+      `
+      SELECT
+        order_items.*,
+        products.name,
+        products.description,
+        products.price,
+        products.image_url,
+        products.image_urls,
+        products.installment_duration_months,
+        products.minimum_deposit_percentage
+      FROM order_items
+      JOIN products ON products.id = order_items.product_id
+      WHERE order_items.order_id = $1
+      ORDER BY order_items.created_at ASC
+      `,
+      [order.id]
+    );
+
+    const installmentsRes = await pool.query(
+      `
+      SELECT *
+      FROM installments
+      WHERE order_id = $1
+      ORDER BY installment_number ASC
+      `,
+      [order.id]
+    );
+
+    const transactionsRes = await pool.query(
+      `
+      SELECT id, installment_id, amount, payment_method, reference, status, created_at
+      FROM payment_transactions
+      WHERE order_id = $1
+      ORDER BY created_at DESC
+      `,
+      [order.id]
+    );
+
+    const totalAmount = Number(order.total_amount);
+    const remainingBalance = Number(order.remaining_balance ?? 0);
+    const depositAmount = Number(order.deposit_amount ?? 0);
+    const paidAmount = Math.max(totalAmount - remainingBalance, 0);
+    const nextInstallment = installmentsRes.rows.find((installment) => installment.status === "PENDING") ?? null;
+    const depositRemaining = Math.max(depositAmount - paidAmount, 0);
+    const isAwaitingApproval = order.status === "AWAITING_APPROVAL";
+    const isRejected = order.status === "REJECTED";
+    const isPaid = remainingBalance <= 0 || order.status === "PAID";
+    const nextPaymentAmount = isAwaitingApproval || isRejected || isPaid
+      ? 0
+      : order.payment_mode === "INSTALLMENT" && depositRemaining > 0
+        ? depositRemaining
+        : nextInstallment
+          ? Number(nextInstallment.amount)
+          : remainingBalance;
+
+    orders.push({
+      ...order,
+      paid_amount: paidAmount,
+      payment_progress_percentage: totalAmount > 0 ? Math.round((paidAmount / totalAmount) * 100) : 0,
+      next_payment_amount: nextPaymentAmount,
+      next_payment_due_date: nextInstallment?.due_date ?? null,
+      next_installment: nextInstallment,
+      can_pay: !isAwaitingApproval && !isRejected && !isPaid && remainingBalance > 0,
+      can_pay_deposit: order.payment_mode === "INSTALLMENT" && depositRemaining > 0,
+      can_pay_remaining_balance: !isAwaitingApproval && !isRejected && !isPaid && remainingBalance > 0 && depositRemaining === 0,
+      order_items: itemsRes.rows,
+      installments: installmentsRes.rows,
+      transactions: transactionsRes.rows
+    });
+  }
+
+  return orders;
 };

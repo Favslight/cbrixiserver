@@ -1,10 +1,7 @@
 // src/modules/payments/paystack.webhook.service.ts
 import crypto from "crypto";
 import { pool } from "../../config/db";
-import { applyPayment } from "./payment.service";
-import { EmailType } from "../email/email.types";
-import { paymentSuccessTemplate } from "../email/email.templates";
-import { sendEmail } from "../email/email.service";
+import { applyPayment, sendPaymentSuccessNotification } from "./payment.service";
 
 export const handlePaystackWebhook = async (
   signature: string,
@@ -38,13 +35,6 @@ export const handlePaystackWebhook = async (
     // prevent duplicate processing
     if (txn.status === "SUCCESS") return;
 
-    const userRes = await pool.query(
-  `SELECT id, email, name FROM users WHERE id=$1`,
-  [txn.user_id]
-);
-
-const user = userRes.rows[0];
-
     await pool.query(
       `UPDATE payment_transactions
        SET status='SUCCESS'
@@ -53,15 +43,6 @@ const user = userRes.rows[0];
     );
 
     await applyPayment(txn);
-
-    await sendEmail(
-  txn.user_id,
-  txn.order_id,
-  txn.installment_id,
-  user.email,
-  "Payment Successful",
-  paymentSuccessTemplate(user.name, txn.amount),
-  EmailType.PAYMENT_SUCCESS
-);
+    await sendPaymentSuccessNotification(txn);
   }
 };

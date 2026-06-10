@@ -1,7 +1,7 @@
 // src/modules/payments/payment.service.ts
 import { pool } from "../../config/db";
 import { sendEmail } from "../email/email.service";
-import { invoiceTemplate } from "../email/email.templates";
+import { invoiceTemplate, paymentSuccessTemplate } from "../email/email.templates";
 import { EmailType } from "../email/email.types";
 import { generateInvoiceNumber } from "./invoice.service";
 import { initializePaystackPayment, verifyPaystackPayment } from "./paystack.service";
@@ -10,23 +10,11 @@ export const initiatePaystackPayment = async (
   user: any,
   orderId: string,
   installmentId: string | null,
-  amount: number
+  amount?: number
 ) => {
 
   const reference = await generateInvoiceNumber();
-
-  const orderRes = await pool.query(
-  `SELECT status FROM orders WHERE id=$1`,
-  [orderId]
-);
-
-const order = orderRes.rows[0];
-
-if (!order) throw new Error("Order not found");
-
-if (order.status === "AWAITING_APPROVAL") {
-  throw new Error("Your installment request is pending admin approval");
-}
+  const payableAmount = await resolvePayableAmount(user.id, orderId, installmentId, amount);
 
   const txn = await pool.query(`
   INSERT INTO payment_transactions
@@ -38,7 +26,7 @@ if (order.status === "AWAITING_APPROVAL") {
     orderId,
     installmentId,
     user.id,
-    amount,
+    payableAmount,
     "PAYSTACK",
     reference,
     "PENDING"
@@ -57,13 +45,14 @@ if (order.status === "AWAITING_APPROVAL") {
 
   const payment = await initializePaystackPayment(
     email,
-    amount,
+    payableAmount,
     reference
   );
 
   return {
     payment_link: payment.authorization_url,
-    reference
+    reference,
+    amount: payableAmount
   };
 };
 
@@ -81,6 +70,14 @@ export const verifyPaystack = async (reference: string) => {
 
   const txn = txnRes.rows[0];
 
+  if (!txn) {
+    throw new Error("Transaction not found");
+  }
+
+  if (txn.status === "SUCCESS") {
+    return true;
+  }
+
   await pool.query(`
   UPDATE payment_transactions
   SET status='SUCCESS'
@@ -88,6 +85,7 @@ export const verifyPaystack = async (reference: string) => {
   `,[txn.id]);
 
   await applyPayment(txn);
+  await sendPaymentSuccessNotification(txn);
 
   return true;
 };
@@ -96,10 +94,11 @@ export const initiateManualTransfer = async (
   user: any,
   orderId: string,
   installmentId: string | null,
-  amount: number
+  amount?: number
 ) => {
 
   const reference = await generateInvoiceNumber();
+  const payableAmount = await resolvePayableAmount(user.id, orderId, installmentId, amount);
 
   await pool.query(`
   INSERT INTO payment_transactions
@@ -110,19 +109,29 @@ export const initiateManualTransfer = async (
     orderId,
     installmentId,
     user.id,
-    amount,
+    payableAmount,
     "BANK_TRANSFER",
     reference,
     "PENDING"
   ]);
 
+  const userRes = await pool.query(
+    `SELECT id, email, firstname FROM users WHERE id = $1`,
+    [user.id]
+  );
+  const currentUser = userRes.rows[0];
+
+  if (!currentUser?.email) {
+    throw new Error("User email not found");
+  }
+
   await sendEmail(
-  user.id,
+  currentUser.id,
   orderId,
   installmentId,
-  user.email,
+  currentUser.email,
   "Bank Transfer Invoice",
-  invoiceTemplate(user.name, reference, amount),
+  invoiceTemplate(currentUser.firstname ?? "Customer", reference, payableAmount),
   EmailType.BANK_TRANSFER_INVOICE
 );
 
@@ -131,7 +140,7 @@ export const initiateManualTransfer = async (
     bank_name: process.env.BANK_NAME,
     account_name: process.env.BANK_ACCOUNT_NAME,
     account_number: process.env.BANK_ACCOUNT_NUMBER,
-    amount
+    amount: payableAmount
   };
 
   
@@ -143,7 +152,8 @@ export const applyPayment = async (txn: any) => {
 
     await pool.query(`
     UPDATE installments
-    SET status='PAID'
+    SET status='PAID',
+        paid_at=NOW()
     WHERE id=$1
     `,[txn.installment_id]);
 
@@ -151,7 +161,103 @@ export const applyPayment = async (txn: any) => {
 
   await pool.query(`
   UPDATE orders
-  SET remaining_balance = remaining_balance - $1
+  SET remaining_balance = GREATEST(remaining_balance - $1, 0),
+      status = CASE
+        WHEN GREATEST(remaining_balance - $1, 0) <= 0 THEN 'PAID'
+        ELSE 'PARTIALLY_PAID'
+      END,
+      updated_at = NOW()
   WHERE id=$2
   `,[txn.amount, txn.order_id]);
+};
+
+const resolvePayableAmount = async (
+  userId: string,
+  orderId: string,
+  installmentId: string | null,
+  requestedAmount?: number
+) => {
+  const orderRes = await pool.query(
+    `
+    SELECT *
+    FROM orders
+    WHERE id=$1 AND user_id=$2
+    `,
+    [orderId, userId]
+  );
+
+  const order = orderRes.rows[0];
+
+  if (!order) throw new Error("Order not found");
+
+  if (order.status === "AWAITING_APPROVAL") {
+    throw new Error("Your installment request is pending admin approval");
+  }
+
+  if (order.status === "REJECTED") {
+    throw new Error("This order was rejected and cannot be paid");
+  }
+
+  const remainingBalance = Number(order.remaining_balance ?? 0);
+
+  if (remainingBalance <= 0 || order.status === "PAID") {
+    throw new Error("This order has already been paid");
+  }
+
+  if (installmentId) {
+    const installmentRes = await pool.query(
+      `
+      SELECT *
+      FROM installments
+      WHERE id=$1 AND order_id=$2
+      `,
+      [installmentId, orderId]
+    );
+
+    const installment = installmentRes.rows[0];
+
+    if (!installment) throw new Error("Installment not found for this order");
+    if (installment.status === "PAID") throw new Error("This installment has already been paid");
+
+    return Math.min(Number(installment.amount), remainingBalance);
+  }
+
+  if (order.payment_mode === "INSTALLMENT") {
+    const depositAmount = Number(order.deposit_amount ?? 0);
+    const paidAmount = Number(order.total_amount) - remainingBalance;
+    const depositRemaining = Math.max(depositAmount - paidAmount, 0);
+
+    if (depositRemaining > 0) {
+      return Math.min(depositRemaining, remainingBalance);
+    }
+  }
+
+  const sanitizedRequestedAmount = Number(requestedAmount ?? remainingBalance);
+
+  if (!Number.isFinite(sanitizedRequestedAmount) || sanitizedRequestedAmount <= 0) {
+    throw new Error("Invalid payment amount");
+  }
+
+  return Math.min(sanitizedRequestedAmount, remainingBalance);
+};
+
+export const sendPaymentSuccessNotification = async (txn: any) => {
+  const userRes = await pool.query(
+    `SELECT id, email, firstname FROM users WHERE id=$1`,
+    [txn.user_id]
+  );
+
+  const user = userRes.rows[0];
+
+  if (!user?.email) return;
+
+  await sendEmail(
+    txn.user_id,
+    txn.order_id,
+    txn.installment_id,
+    user.email,
+    "Payment Successful",
+    paymentSuccessTemplate(user.firstname ?? "Customer", Number(txn.amount)),
+    EmailType.PAYMENT_SUCCESS
+  );
 };

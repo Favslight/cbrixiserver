@@ -1,6 +1,6 @@
 import { FastifyRequest, FastifyReply } from "fastify";
 import { pool } from "../../config/db";
-import { applyPayment } from "../payments/payment.service";
+import { applyPayment, sendPaymentSuccessNotification } from "../payments/payment.service";
 import { sendEmail } from "../email/email.service";
 import { orderApprovedTemplate, orderRejectedTemplate } from "../email/email.templates";
 import { EmailType } from "../email/email.types";
@@ -11,9 +11,19 @@ export const getPendingPayments = async (
 ) => {
 
   const result = await pool.query(`
-  SELECT pt.*, u.firstname, u.lastname
+  SELECT
+    pt.*,
+    u.firstname,
+    u.lastname,
+    u.email,
+    o.payment_mode,
+    o.total_amount,
+    o.deposit_amount,
+    o.remaining_balance,
+    o.external_email
   FROM payment_transactions pt
   JOIN users u ON u.id = pt.user_id
+  JOIN orders o ON o.id = pt.order_id
   WHERE pt.status='PENDING'
   AND pt.payment_method='BANK_TRANSFER'
   ORDER BY pt.created_at DESC
@@ -28,9 +38,21 @@ export const getPendingOrders = async (
 ) => {
 
   const result = await pool.query(`
-  SELECT * FROM orders
-  WHERE status = 'AWAITING_APPROVAL'
-  ORDER BY created_at DESC
+  SELECT
+    o.*,
+    u.firstname,
+    u.lastname,
+    u.email AS user_email,
+    verified_user.id AS verified_user_id,
+    verified_user.firstname AS verified_firstname,
+    verified_user.lastname AS verified_lastname,
+    verified_user.email AS verified_email,
+    (verified_user.id IS NOT NULL) AS external_email_exists
+  FROM orders o
+  JOIN users u ON u.id = o.user_id
+  LEFT JOIN users verified_user ON LOWER(verified_user.email) = LOWER(o.external_email)
+  WHERE o.status = 'AWAITING_APPROVAL'
+  ORDER BY o.created_at DESC
   `);
 
   return reply.send(result.rows);
@@ -50,6 +72,17 @@ export const approveOrder = async (
 
   if (!order) throw new Error("Order not found");
 
+  if (order.payment_mode === "INSTALLMENT") {
+    const verifiedEmailRes = await pool.query(
+      `SELECT id FROM users WHERE LOWER(email) = LOWER($1)`,
+      [order.external_email]
+    );
+
+    if (!verifiedEmailRes.rows[0]) {
+      throw new Error("Cannot approve installment order because the submitted Cbrilliance email does not exist");
+    }
+  }
+
   await pool.query(`
   UPDATE orders
   SET status='PENDING'
@@ -57,7 +90,7 @@ export const approveOrder = async (
   `,[id]);
 
   const userRes = await pool.query(
-    `SELECT email, firstname FROM users WHERE id = $1`,
+    `SELECT id, email, firstname FROM users WHERE id = $1`,
     [order.user_id]
   );
 
@@ -69,7 +102,7 @@ export const approveOrder = async (
     null,
     user.email,
     "Order Approved",
-    orderApprovedTemplate(user.firstname, order.total_amount),
+    orderApprovedTemplate(user.firstname, Number(order.total_amount), Number(order.deposit_amount), order.external_email),
     EmailType.ORDER_APPROVED
   );
 
@@ -97,7 +130,7 @@ export const rejectOrder = async (
   `,[id]);
 
   const userRes = await pool.query(
-    `SELECT email, firstname FROM users WHERE id = $1`,
+    `SELECT id, email, firstname FROM users WHERE id = $1`,
     [order.user_id]
   );
 
@@ -109,7 +142,7 @@ export const rejectOrder = async (
     null,
     user.email,
     "Order Rejected",
-    orderRejectedTemplate(user.firstname),
+    orderRejectedTemplate(user.firstname, order.external_email),
     EmailType.ORDER_REJECTED
   );
 
@@ -138,6 +171,7 @@ export const approvePayment = async (
   `,[id]);
 
   await applyPayment(txn);
+  await sendPaymentSuccessNotification(txn);
 
   return reply.send({ success:true });
 };

@@ -61,12 +61,13 @@ export const getCart = async (userId: string) => {
   const result = await pool.query(
     `
     SELECT
-      cart_items.id,
+      cart_items.id AS cart_item_id,
       cart_items.product_id,
       cart_items.quantity,
       products.name,
       products.price,
       products.image_url,
+      products.image_urls,
       products.installment_enabled,
       products.installment_duration_months,
       products.minimum_deposit_percentage,
