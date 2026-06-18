@@ -172,7 +172,7 @@ export const updateUserProfile = async (
         [payload.email, userId]
       );
 
-      if (emailCheck) {
+      if (emailCheck.rowCount) {
         throw new Error("Email already in use");
       }
     }
@@ -184,7 +184,7 @@ export const updateUserProfile = async (
         [payload.username, userId]
       );
 
-      if (usernameCheck) {
+      if (usernameCheck.rowCount) {
         throw new Error("Username already taken");
       }
     }
