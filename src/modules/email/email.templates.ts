@@ -85,3 +85,14 @@ This is a reminder that your installment payment of ${money(amount)} is due on $
 
 Please make payment before the due date to avoid penalties.
 `;
+
+export const resetPasswordTemplate = (firstname: string, resetLink: string) => `
+Hello ${firstname},
+
+We received a request to reset your Cbrixi password.
+
+Use this link to create a new password:
+${resetLink}
+
+This link expires in 15 minutes. If you did not request this, you can ignore this email.
+`;

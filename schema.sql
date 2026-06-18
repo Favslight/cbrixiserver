@@ -1,9 +1,13 @@
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    external_user_id UUID NOT NULL UNIQUE,
+    external_user_id UUID UNIQUE,
     firstname VARCHAR(100),
     lastname VARCHAR(100),
+    username VARCHAR(100) UNIQUE,
     email VARCHAR(150) NOT NULL UNIQUE,
+    password_hash TEXT,
+    reset_token VARCHAR(255),
+    reset_token_expires TIMESTAMP,
     status VARCHAR(20) DEFAULT 'ACTIVE', -- ACTIVE / BLOCKED
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
@@ -113,9 +117,24 @@ CREATE TABLE email_logs (
 CREATE INDEX idx_orders_user_id ON orders(user_id);
 CREATE INDEX idx_orders_status ON orders(status);
 CREATE INDEX idx_orders_external_email ON orders(external_email);
+CREATE INDEX idx_users_reset_token ON users(reset_token);
 CREATE INDEX idx_installments_due_date ON installments(due_date);
 CREATE INDEX idx_installments_status ON installments(status);
 CREATE INDEX idx_default_events_processed ON default_events(processed);
+
+ALTER TABLE users
+ALTER COLUMN external_user_id DROP NOT NULL,
+ADD COLUMN IF NOT EXISTS username VARCHAR(100),
+ADD COLUMN IF NOT EXISTS password_hash TEXT,
+ADD COLUMN IF NOT EXISTS reset_token VARCHAR(255),
+ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMP;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_unique
+ON users(username)
+WHERE username IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_users_reset_token
+ON users(reset_token);
 
 ALTER TABLE products
 ADD COLUMN IF NOT EXISTS image_urls TEXT[] DEFAULT ARRAY[]::TEXT[],

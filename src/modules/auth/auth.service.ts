@@ -1,14 +1,26 @@
 import { pool } from "../../config/db";
 import { hashPassword, comparePassword } from "../../common/utils/password";
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
+import { sendEmail } from "../email/email.service";
+import { resetPasswordTemplate } from "../email/email.templates";
+import { EmailType } from "../email/email.types";
 //import { createNotification } from "../notifications/notification.service";
 //import { creditWallet, debitWallet, getAdminWallet } from "../wallets/wallet.engine";
 //import { getUserWallet } from "../wallets/wallet.service";
 //import { sendOTPEmail, sendResetPasswordEmail } from "../../common/utils/email";
-//import crypto from "crypto";
 
 
 const JWT_SECRET = process.env.USER_JWT_SECRET;
+const PASSWORD_RESET_MESSAGE = "If that email exists, a password reset link has been sent.";
+
+const hashResetToken = (token: string) => {
+  return crypto.createHash("sha256").update(token).digest("hex");
+};
+
+const getFrontendUrl = () => {
+  return (process.env.FRONTEND_URL || "https://cbrixi.com").replace(/\/$/, "");
+};
 
 /*const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
@@ -214,6 +226,82 @@ export const logoutUser = async () => {
   return { message: "Logged out successfully" };
 };
 
+export const forgotPassword = async (email: string) => {
+  const normalizedEmail = email.trim().toLowerCase();
+
+  const { rows } = await pool.query(
+    `SELECT id, email, firstname FROM users WHERE LOWER(email) = LOWER($1)`,
+    [normalizedEmail]
+  );
+
+  if (!rows.length) {
+    return { message: PASSWORD_RESET_MESSAGE };
+  }
+
+  const user = rows[0];
+  const token = crypto.randomBytes(32).toString("hex");
+  const tokenHash = hashResetToken(token);
+  const expiry = new Date(Date.now() + 15 * 60 * 1000);
+
+  await pool.query(
+    `UPDATE users
+     SET reset_token = $1,
+         reset_token_expires = $2,
+         updated_at = now()
+     WHERE id = $3`,
+    [tokenHash, expiry, user.id]
+  );
+
+  const resetLink = `${getFrontendUrl()}/reset-password?token=${token}`;
+
+  await sendEmail(
+    user.id,
+    null,
+    null,
+    user.email,
+    "Reset your Cbrixi password",
+    resetPasswordTemplate(user.firstname ?? "there", resetLink),
+    EmailType.PASSWORD_RESET
+  );
+
+  return { message: PASSWORD_RESET_MESSAGE };
+};
+
+export const resetPassword = async (token: string, newPassword: string) => {
+  const tokenHash = hashResetToken(token.trim());
+
+  const { rows } = await pool.query(
+    `SELECT id, reset_token_expires
+     FROM users
+     WHERE reset_token = $1`,
+    [tokenHash]
+  );
+
+  if (!rows.length) {
+    throw new Error("Invalid or expired reset token");
+  }
+
+  const user = rows[0];
+
+  if (!user.reset_token_expires || new Date() > user.reset_token_expires) {
+    throw new Error("Invalid or expired reset token");
+  }
+
+  const passwordHash = await hashPassword(newPassword);
+
+  await pool.query(
+    `UPDATE users
+     SET password_hash = $1,
+         reset_token = NULL,
+         reset_token_expires = NULL,
+         updated_at = now()
+     WHERE id = $2`,
+    [passwordHash, user.id]
+  );
+
+  return { message: "Password reset successful" };
+};
+
 
 export const deleteUserAccount = async (userId: string) => {
   const client = await pool.connect();
@@ -356,55 +444,4 @@ export const resendEmailOTP = async (email: string) => {
   await sendOTPEmail(email, otp);
 
   return { message: "OTP resent successfully" };
-};
-
-export const forgotPassword = async (email: string) => {
-  const { rows } = await pool.query(
-    `SELECT id FROM users WHERE email = $1`,
-    [email]
-  );
-
-  // Don't reveal whether email exists
-  if (!rows.length) return;
-
-  const user = rows[0];
-
-  const token = crypto.randomBytes(32).toString("hex");
-  const expiry = new Date(Date.now() + 15 * 60 * 1000);
-
-  await pool.query(
-    `UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3`,
-    [token, expiry, user.id]
-  );
-
-  const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
-
-  await sendResetPasswordEmail(email, resetLink);
-};
-
-export const resetPassword = async (token: string, newPassword: string) => {
-  const { rows } = await pool.query(
-    `SELECT id, reset_token_expires FROM users WHERE reset_token = $1`,
-    [token]
-  );
-
-  if (!rows.length) throw new Error("Invalid or expired token");
-
-  const user = rows[0];
-
-  if (new Date() > user.reset_token_expires)
-    throw new Error("Token expired");
-
-  const passwordHash = await hashPassword(newPassword);
-
-  await pool.query(
-    `UPDATE users
-     SET password_hash = $1,
-         reset_token = NULL,
-         reset_token_expires = NULL
-     WHERE id = $2`,
-    [passwordHash, user.id]
-  );
-
-  return { message: "Password reset successful" };
 };*/
