@@ -17,7 +17,12 @@ CREATE TABLE products (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(255) NOT NULL,
     description TEXT,
+    category VARCHAR(255),
     price NUMERIC(15,2) NOT NULL,
+    image_url TEXT,
+    image_public_id TEXT,
+    image_urls TEXT[] DEFAULT ARRAY[]::TEXT[],
+    image_public_ids TEXT[] DEFAULT ARRAY[]::TEXT[],
     stock INTEGER DEFAULT 0,
     installment_enabled BOOLEAN DEFAULT FALSE,
     minimum_deposit_percentage INTEGER DEFAULT 50,
@@ -114,6 +119,44 @@ CREATE TABLE email_logs (
     sent_at TIMESTAMP DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS partner_apps (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR NOT NULL,
+    api_key VARCHAR UNIQUE NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS partner_sales_records (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    partner_app_id UUID NOT NULL REFERENCES partner_apps(id),
+    external_order_id VARCHAR NOT NULL,
+    invoice_number VARCHAR,
+    customer_name VARCHAR,
+    customer_email VARCHAR,
+    customer_phone VARCHAR,
+    delivery_address TEXT,
+    payment_status VARCHAR,
+    order_status VARCHAR,
+    total_amount NUMERIC(12,2),
+    raw_payload JSONB,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(partner_app_id, external_order_id)
+);
+
+CREATE TABLE IF NOT EXISTS partner_sales_record_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sales_record_id UUID NOT NULL REFERENCES partner_sales_records(id) ON DELETE CASCADE,
+    product_id UUID,
+    product_name_snapshot VARCHAR,
+    unit_price_snapshot NUMERIC(12,2),
+    quantity INT,
+    total_price NUMERIC(12,2),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
 CREATE INDEX idx_orders_user_id ON orders(user_id);
 CREATE INDEX idx_orders_status ON orders(status);
 CREATE INDEX idx_orders_external_email ON orders(external_email);
@@ -139,6 +182,9 @@ CREATE INDEX IF NOT EXISTS idx_users_reset_token
 ON users(reset_token);
 
 ALTER TABLE products
+ADD COLUMN IF NOT EXISTS category VARCHAR(255),
+ADD COLUMN IF NOT EXISTS image_url TEXT,
+ADD COLUMN IF NOT EXISTS image_public_id TEXT,
 ADD COLUMN IF NOT EXISTS image_urls TEXT[] DEFAULT ARRAY[]::TEXT[],
 ADD COLUMN IF NOT EXISTS image_public_ids TEXT[] DEFAULT ARRAY[]::TEXT[];
 

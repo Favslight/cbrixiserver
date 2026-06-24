@@ -1,6 +1,6 @@
 import "@fastify/jwt";
-import { FastifyInstance, FastifyRequest } from "fastify";
-import { int } from "zod";
+import { FastifyRequest } from "fastify";
+import { PartnerApp } from "../modules/partner/partner.types";
 
 
 declare module "fastify" {
@@ -15,6 +15,8 @@ declare module "fastify" {
             email: string;
             role: "ADMIN" | "MAIN_ADMIN" | "SUPER_ADMIN";
         }
+
+        partner?: PartnerApp;
     }
 
     interface FastifyRequest {

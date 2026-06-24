@@ -11,6 +11,7 @@ import { paymentRoutes } from "./modules/payments/payment.route";
 import { adminPaymentRoutes } from "./modules/admin/admin.payment.routes";
 import { startInstallmentReminderJob } from "./modules/email/email.scheduler";
 import { authRoutes } from "./modules/auth/auth.route";
+import { partnerRoutes } from "./modules/partner/partner.routes";
 
 startInstallmentReminderJob();
 
@@ -94,7 +95,7 @@ app.register(cors, {
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
+  allowedHeaders: ["Content-Type", "Authorization", "x-partner-key"]
 });
 
 app.register(import("@fastify/jwt"), { secret: process.env.USER_JWT_SECRET! });
@@ -138,3 +139,4 @@ app.register(checkoutRoutes, { prefix: "/order" });
 app.register(authRoutes, { prefix: "/user" });
 app.register(paymentRoutes);
 app.register(adminPaymentRoutes);
+app.register(partnerRoutes, { prefix: "/api/partner" });
