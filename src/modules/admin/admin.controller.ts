@@ -72,18 +72,85 @@ export const getAllUsersDetailsController = async (
           [order.id]
         );
         const installments = installmentsRes.rows;
+
+        const transactionsRes = await pool.query(
+          `
+          SELECT
+            pt.id,
+            pt.installment_id,
+            pt.amount,
+            pt.payment_method,
+            pt.reference,
+            pt.status,
+            pt.created_at,
+            i.installment_number,
+            CASE
+              WHEN orders.payment_mode = 'INSTALLMENT' AND pt.installment_id IS NULL THEN 'INSTALLMENT_DEPOSIT'
+              WHEN pt.installment_id IS NOT NULL THEN 'INSTALLMENT_PAYMENT'
+              ELSE 'ORDER_PAYMENT'
+            END AS payment_type,
+            CASE
+              WHEN orders.payment_mode = 'INSTALLMENT' AND pt.installment_id IS NULL THEN 'First deposit'
+              WHEN pt.installment_id IS NOT NULL THEN CONCAT('Installment ', i.installment_number)
+              ELSE 'Full payment'
+            END AS payment_label
+          FROM payment_transactions pt
+          JOIN orders ON orders.id = pt.order_id
+          LEFT JOIN installments i ON i.id = pt.installment_id
+          WHERE pt.order_id = $1
+          ORDER BY pt.created_at DESC
+          `,
+          [order.id]
+        );
+
         const totalAmount = Number(order.total_amount);
-        const remainingBalance = Number(order.remaining_balance ?? 0);
         const depositAmount = Number(order.deposit_amount ?? 0);
-        const paidAmount = Math.max(totalAmount - remainingBalance, 0);
+        const paidAmount = transactionsRes.rows
+          .filter((transaction) => transaction.status === "SUCCESS")
+          .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
+        const remainingBalance = Math.max(totalAmount - paidAmount, 0);
         const nextInstallment = installments.find((installment) => installment.status === "PENDING") ?? null;
         const depositRemaining = Math.max(depositAmount - paidAmount, 0);
         const isAwaitingApproval = order.status === "AWAITING_APPROVAL";
         const isRejected = order.status === "REJECTED";
         const isPaid = remainingBalance <= 0 || order.status === "PAID";
+        const canPayDeposit = !isAwaitingApproval && !isRejected && !isPaid && order.payment_mode === "INSTALLMENT" && depositRemaining > 0;
+        const canPayRemainingBalance = !isAwaitingApproval && !isRejected && !isPaid && remainingBalance > 0 && depositRemaining === 0;
+        const depositTransactions = transactionsRes.rows.filter((transaction) => transaction.payment_type === "INSTALLMENT_DEPOSIT");
+        const depositPaidAmount = depositTransactions
+          .filter((transaction) => transaction.status === "SUCCESS")
+          .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
+        const depositPayment = order.payment_mode === "INSTALLMENT"
+          ? {
+              payment_type: "INSTALLMENT_DEPOSIT",
+              payment_label: "First deposit",
+              amount: depositAmount,
+              paid_amount: Math.min(depositPaidAmount, depositAmount),
+              remaining_amount: Math.max(depositAmount - depositPaidAmount, 0),
+              status: isAwaitingApproval
+                ? "AWAITING_ORDER_APPROVAL"
+                : depositRemaining <= 0
+                  ? "PAID"
+                  : canPayDeposit
+                    ? "PENDING"
+                    : order.status,
+              can_pay: canPayDeposit,
+              transactions: depositTransactions
+            }
+          : null;
+        const paymentSchedule = [
+          ...(depositPayment ? [depositPayment] : []),
+          ...installments.map((installment) => ({
+            ...installment,
+            payment_type: "INSTALLMENT_PAYMENT",
+            payment_label: `Installment ${installment.installment_number}`,
+            can_pay: canPayRemainingBalance && installment.status === "PENDING"
+          }))
+        ];
 
         detailedOrders.push({
           ...order,
+          remaining_balance: remainingBalance,
           paid_amount: paidAmount,
           payment_progress_percentage: totalAmount > 0 ? Math.round((paidAmount / totalAmount) * 100) : 0,
           next_payment_amount: isAwaitingApproval || isRejected || isPaid
@@ -95,8 +162,12 @@ export const getAllUsersDetailsController = async (
                 : remainingBalance,
           next_payment_due_date: nextInstallment?.due_date ?? null,
           can_pay: !isAwaitingApproval && !isRejected && !isPaid && remainingBalance > 0,
+          can_pay_deposit: canPayDeposit,
+          can_pay_remaining_balance: canPayRemainingBalance,
           order_items: orderItems,
-          installments
+          installments,
+          payment_schedule: paymentSchedule,
+          transactions: transactionsRes.rows
         });
       }
 

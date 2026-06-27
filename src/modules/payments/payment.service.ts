@@ -160,15 +160,20 @@ export const applyPayment = async (txn: any) => {
   }
 
   await pool.query(`
-  UPDATE orders
-  SET remaining_balance = GREATEST(remaining_balance - $1, 0),
+  UPDATE orders o
+  SET remaining_balance = GREATEST(o.total_amount - paid.total_paid, 0),
       status = CASE
-        WHEN GREATEST(remaining_balance - $1, 0) <= 0 THEN 'PAID'
+        WHEN GREATEST(o.total_amount - paid.total_paid, 0) <= 0 THEN 'PAID'
         ELSE 'PARTIALLY_PAID'
       END,
       updated_at = NOW()
-  WHERE id=$2
-  `,[txn.amount, txn.order_id]);
+  FROM (
+    SELECT COALESCE(SUM(amount), 0) AS total_paid
+    FROM payment_transactions
+    WHERE order_id=$1 AND status='SUCCESS'
+  ) paid
+  WHERE o.id=$1
+  `,[txn.order_id]);
 };
 
 const resolvePayableAmount = async (
@@ -198,7 +203,17 @@ const resolvePayableAmount = async (
     throw new Error("This order was rejected and cannot be paid");
   }
 
-  const remainingBalance = Number(order.remaining_balance ?? 0);
+  const paidRes = await pool.query(
+    `
+    SELECT COALESCE(SUM(amount), 0) AS paid_amount
+    FROM payment_transactions
+    WHERE order_id=$1 AND status='SUCCESS'
+    `,
+    [orderId]
+  );
+
+  const paidAmount = Number(paidRes.rows[0]?.paid_amount ?? 0);
+  const remainingBalance = Math.max(Number(order.total_amount) - paidAmount, 0);
 
   if (remainingBalance <= 0 || order.status === "PAID") {
     throw new Error("This order has already been paid");
@@ -224,7 +239,6 @@ const resolvePayableAmount = async (
 
   if (order.payment_mode === "INSTALLMENT") {
     const depositAmount = Number(order.deposit_amount ?? 0);
-    const paidAmount = Number(order.total_amount) - remainingBalance;
     const depositRemaining = Math.max(depositAmount - paidAmount, 0);
 
     if (depositRemaining > 0) {

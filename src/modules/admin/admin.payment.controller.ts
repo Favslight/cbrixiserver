@@ -5,12 +5,7 @@ import { sendEmail } from "../email/email.service";
 import { orderApprovedTemplate, orderRejectedTemplate } from "../email/email.templates";
 import { EmailType } from "../email/email.types";
 
-export const getPendingPayments = async (
-  req: FastifyRequest,
-  reply: FastifyReply
-) => {
-
-  const result = await pool.query(`
+const paymentListQuery = `
   SELECT
     pt.*,
     u.firstname,
@@ -19,25 +14,37 @@ export const getPendingPayments = async (
     o.payment_mode,
     o.total_amount,
     o.deposit_amount,
-    o.remaining_balance,
-    o.external_email
+    COALESCE(success_payments.paid_amount, 0) AS paid_amount,
+    GREATEST(o.total_amount - COALESCE(success_payments.paid_amount, 0), 0) AS remaining_balance,
+    o.status AS order_status,
+    o.external_email,
+    i.installment_number,
+    i.due_date AS installment_due_date,
+    i.status AS installment_status,
+    CASE
+      WHEN o.payment_mode = 'INSTALLMENT' AND pt.installment_id IS NULL THEN 'INSTALLMENT_DEPOSIT'
+      WHEN pt.installment_id IS NOT NULL THEN 'INSTALLMENT_PAYMENT'
+      ELSE 'ORDER_PAYMENT'
+    END AS payment_type,
+    CASE
+      WHEN o.payment_mode = 'INSTALLMENT' AND pt.installment_id IS NULL THEN 'First deposit'
+      WHEN pt.installment_id IS NOT NULL THEN CONCAT('Installment ', i.installment_number)
+      ELSE 'Full payment'
+    END AS payment_label
   FROM payment_transactions pt
   JOIN users u ON u.id = pt.user_id
   JOIN orders o ON o.id = pt.order_id
-  WHERE pt.status='PENDING'
-  AND pt.payment_method='BANK_TRANSFER'
-  ORDER BY pt.created_at DESC
-  `);
+  LEFT JOIN installments i ON i.id = pt.installment_id
+  LEFT JOIN (
+    SELECT order_id, SUM(amount) AS paid_amount
+    FROM payment_transactions
+    WHERE status = 'SUCCESS'
+    GROUP BY order_id
+  ) success_payments ON success_payments.order_id = o.id
+  WHERE pt.status = $1
+`;
 
-  return reply.send(result.rows);
-};
-
-export const getPendingOrders = async (
-  req: FastifyRequest,
-  reply: FastifyReply
-) => {
-
-  const result = await pool.query(`
+const orderListQuery = `
   SELECT
     o.*,
     u.firstname,
@@ -51,7 +58,81 @@ export const getPendingOrders = async (
   FROM orders o
   JOIN users u ON u.id = o.user_id
   LEFT JOIN users verified_user ON LOWER(verified_user.email) = LOWER(o.external_email)
+`;
+
+const sendPaymentsByStatus = async (
+  reply: FastifyReply,
+  status: "PENDING" | "SUCCESS" | "FAILED",
+  bankTransferOnly = false
+) => {
+  const result = await pool.query(
+    `
+    ${paymentListQuery}
+    ${bankTransferOnly ? "AND pt.payment_method = 'BANK_TRANSFER'" : ""}
+    ORDER BY pt.created_at DESC
+    `,
+    [status]
+  );
+
+  return reply.send(result.rows);
+};
+
+export const getPendingPayments = async (
+  req: FastifyRequest,
+  reply: FastifyReply
+) => {
+  return sendPaymentsByStatus(reply, "PENDING", true);
+};
+
+export const getApprovedPayments = async (
+  req: FastifyRequest,
+  reply: FastifyReply
+) => {
+  return sendPaymentsByStatus(reply, "SUCCESS");
+};
+
+export const getRejectedPayments = async (
+  req: FastifyRequest,
+  reply: FastifyReply
+) => {
+  return sendPaymentsByStatus(reply, "FAILED");
+};
+
+export const getPendingOrders = async (
+  req: FastifyRequest,
+  reply: FastifyReply
+) => {
+
+  const result = await pool.query(`
+  ${orderListQuery}
   WHERE o.status = 'AWAITING_APPROVAL'
+  ORDER BY o.created_at DESC
+  `);
+
+  return reply.send(result.rows);
+};
+
+export const getApprovedOrders = async (
+  req: FastifyRequest,
+  reply: FastifyReply
+) => {
+  const result = await pool.query(`
+  ${orderListQuery}
+  WHERE o.payment_mode = 'INSTALLMENT'
+  AND o.status IN ('PENDING', 'PARTIALLY_PAID', 'PAID')
+  ORDER BY o.created_at DESC
+  `);
+
+  return reply.send(result.rows);
+};
+
+export const getRejectedOrders = async (
+  req: FastifyRequest,
+  reply: FastifyReply
+) => {
+  const result = await pool.query(`
+  ${orderListQuery}
+  WHERE o.status = 'REJECTED'
   ORDER BY o.created_at DESC
   `);
 
@@ -172,6 +253,34 @@ export const approvePayment = async (
 
   await applyPayment(txn);
   await sendPaymentSuccessNotification(txn);
+
+  return reply.send({ success:true });
+};
+
+export const rejectPayment = async (
+  req: FastifyRequest,
+  reply: FastifyReply
+) => {
+
+  const { id } = req.params as any;
+
+  const txnRes = await pool.query(`
+  SELECT * FROM payment_transactions WHERE id=$1
+  `,[id]);
+
+  const txn = txnRes.rows[0];
+
+  if (!txn) throw new Error("Transaction not found");
+
+  if (txn.status === "SUCCESS") {
+    throw new Error("Approved payments cannot be rejected");
+  }
+
+  await pool.query(`
+  UPDATE payment_transactions
+  SET status='FAILED'
+  WHERE id=$1
+  `,[id]);
 
   return reply.send({ success:true });
 };
