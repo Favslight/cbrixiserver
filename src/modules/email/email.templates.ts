@@ -7,7 +7,8 @@ export const orderCreatedTemplate = (
   firstname: string,
   amount: number,
   paymentMode = "FULL",
-  depositAmount?: number
+  depositAmount?: number,
+  awaitingInstallmentApproval = paymentMode === "INSTALLMENT"
 ) => `
 Hello ${firstname},
 
@@ -15,11 +16,18 @@ Your order has been created successfully.
 
 Total Order Amount: ${money(amount)}
 ${paymentMode === "INSTALLMENT"
-  ? `
+  ? awaitingInstallmentApproval
+    ? `
 Installment request status: Pending admin approval
 Deposit required after approval: ${money(Number(depositAmount ?? 0))}
 
 We will email you once your Cbrilliance email has been verified. Payment details will become available on your dashboard after approval.
+`
+    : `
+Installment request status: Approved
+Deposit to pay now: ${money(Number(depositAmount ?? 0))}
+
+Please continue from your dashboard to make the deposit payment.
 `
   : ""}
 

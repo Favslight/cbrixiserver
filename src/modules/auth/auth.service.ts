@@ -5,6 +5,7 @@ import crypto from "crypto";
 import { sendEmail } from "../email/email.service";
 import { resetPasswordTemplate } from "../email/email.templates";
 import { EmailType } from "../email/email.types";
+import { ensureCbrillianceVerificationColumns } from "../users/cbrillianceVerification.service";
 //import { createNotification } from "../notifications/notification.service";
 //import { creditWallet, debitWallet, getAdminWallet } from "../wallets/wallet.engine";
 //import { getUserWallet } from "../wallets/wallet.service";
@@ -138,8 +139,19 @@ export const loginUser = async (payload: {
 }
 
 export const getUserById = async (userId: string) => {
+    await ensureCbrillianceVerificationColumns();
+
     const result = await pool.query(`
-        SELECT id, firstname, lastname, username, email, created_at
+        SELECT
+          id,
+          firstname,
+          lastname,
+          username,
+          email,
+          cbrilliance_email,
+          cbrilliance_email_verified,
+          cbrilliance_email_verified_at,
+          created_at
         FROM users
         WHERE id = $1`,
     [userId]);

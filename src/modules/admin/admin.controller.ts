@@ -1,6 +1,7 @@
 import { FastifyReply, FastifyRequest } from "fastify";
 import { adminLoginService } from "./admin.service";
 import { pool } from "../../config/db";
+import { ensureCbrillianceVerificationColumns } from "../users/cbrillianceVerification.service";
 
 interface AdminLoginBody {
   email: string;
@@ -34,7 +35,22 @@ export const getAllUsersDetailsController = async (
   reply: FastifyReply
 ) => {
   try {
-    const usersRes = await pool.query(`SELECT id, firstname, lastname, email, status, created_at FROM users ORDER BY created_at DESC`);
+    await ensureCbrillianceVerificationColumns();
+
+    const usersRes = await pool.query(`
+      SELECT
+        id,
+        firstname,
+        lastname,
+        email,
+        cbrilliance_email,
+        cbrilliance_email_verified,
+        cbrilliance_email_verified_at,
+        status,
+        created_at
+      FROM users
+      ORDER BY created_at DESC
+    `);
     const users = usersRes.rows;
 
     // Fetch orders, order items, installments for each user

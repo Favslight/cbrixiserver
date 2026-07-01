@@ -8,6 +8,9 @@ CREATE TABLE users (
     password_hash TEXT,
     reset_token VARCHAR(255),
     reset_token_expires TIMESTAMP,
+    cbrilliance_email VARCHAR(150),
+    cbrilliance_email_verified BOOLEAN DEFAULT FALSE,
+    cbrilliance_email_verified_at TIMESTAMP,
     status VARCHAR(20) DEFAULT 'ACTIVE', -- ACTIVE / BLOCKED
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
@@ -160,6 +163,7 @@ CREATE TABLE IF NOT EXISTS partner_sales_record_items (
 CREATE INDEX idx_orders_user_id ON orders(user_id);
 CREATE INDEX idx_orders_status ON orders(status);
 CREATE INDEX idx_orders_external_email ON orders(external_email);
+CREATE INDEX idx_users_cbrilliance_email ON users(LOWER(cbrilliance_email)) WHERE cbrilliance_email IS NOT NULL;
 CREATE INDEX idx_users_reset_token ON users(reset_token);
 CREATE INDEX idx_installments_due_date ON installments(due_date);
 CREATE INDEX idx_installments_status ON installments(status);
@@ -171,6 +175,9 @@ ADD COLUMN IF NOT EXISTS username VARCHAR(100),
 ADD COLUMN IF NOT EXISTS password_hash TEXT,
 ADD COLUMN IF NOT EXISTS reset_token VARCHAR(255),
 ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMP,
+ADD COLUMN IF NOT EXISTS cbrilliance_email VARCHAR(150),
+ADD COLUMN IF NOT EXISTS cbrilliance_email_verified BOOLEAN DEFAULT FALSE,
+ADD COLUMN IF NOT EXISTS cbrilliance_email_verified_at TIMESTAMP,
 ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW(),
 ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
 
@@ -180,6 +187,10 @@ WHERE username IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_users_reset_token
 ON users(reset_token);
+
+CREATE INDEX IF NOT EXISTS idx_users_cbrilliance_email
+ON users(LOWER(cbrilliance_email))
+WHERE cbrilliance_email IS NOT NULL;
 
 ALTER TABLE products
 ADD COLUMN IF NOT EXISTS category VARCHAR(255),

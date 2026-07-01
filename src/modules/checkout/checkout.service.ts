@@ -4,14 +4,30 @@ import { getCart } from "../cart/cart.service";
 import { sendEmail } from "../email/email.service";
 import { orderCreatedTemplate } from "../email/email.templates";
 import { EmailType } from "../email/email.types";
+import {
+  ensureCbrillianceVerificationColumns,
+  normalizeCbrillianceEmail
+} from "../users/cbrillianceVerification.service";
 
 export const createOrderFromCart = async (
   user: any,
   paymentMode: "FULL" | "INSTALLMENT",
   externalEmail: string | null
 ) => {
+  await ensureCbrillianceVerificationColumns();
+
   const userRes = await pool.query(
-    `SELECT id, firstname, lastname, email FROM users WHERE id=$1`,
+    `
+    SELECT
+      id,
+      firstname,
+      lastname,
+      email,
+      cbrilliance_email,
+      cbrilliance_email_verified
+    FROM users
+    WHERE id=$1
+    `,
     [user.id]
   );
   const currentUser = userRes.rows[0];
@@ -25,7 +41,16 @@ export const createOrderFromCart = async (
     throw new Error("Invalid payment mode");
   }
 
-  const normalizedExternalEmail = externalEmail?.trim().toLowerCase() || null;
+  const submittedExternalEmail = normalizeCbrillianceEmail(externalEmail);
+  const verifiedCbrillianceEmail = currentUser.cbrilliance_email_verified
+    ? normalizeCbrillianceEmail(currentUser.cbrilliance_email)
+    : null;
+  const normalizedExternalEmail = submittedExternalEmail ?? verifiedCbrillianceEmail;
+  const isUsingVerifiedCbrillianceEmail = Boolean(
+    paymentMode === "INSTALLMENT"
+    && verifiedCbrillianceEmail
+    && normalizedExternalEmail === verifiedCbrillianceEmail
+  );
 
   if (paymentMode === "INSTALLMENT" && !normalizedExternalEmail) {
     throw new Error("Cbrilliance email is required for installment");
@@ -54,9 +79,9 @@ export const createOrderFromCart = async (
   const installmentBalance = totalAmount - depositAmount;
   const remainingBalance = totalAmount;
 
-  const status = paymentMode === "INSTALLMENT"
-  ? "AWAITING_APPROVAL"
-  : "PENDING";
+  const status = paymentMode === "INSTALLMENT" && !isUsingVerifiedCbrillianceEmail
+    ? "AWAITING_APPROVAL"
+    : "PENDING";
 
   // Create order
   const orderRes = await pool.query(`
@@ -97,7 +122,13 @@ export const createOrderFromCart = async (
   null,
   currentUser.email,
   "Order Created",
-  orderCreatedTemplate(currentUser.firstname, order.total_amount, order.payment_mode, order.deposit_amount),
+  orderCreatedTemplate(
+    currentUser.firstname,
+    Number(order.total_amount),
+    order.payment_mode,
+    Number(order.deposit_amount ?? 0),
+    order.status === "AWAITING_APPROVAL"
+  ),
   EmailType.ORDER_CREATED
 );
 

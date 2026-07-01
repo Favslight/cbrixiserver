@@ -4,6 +4,11 @@ import { applyPayment, sendPaymentSuccessNotification } from "../payments/paymen
 import { sendEmail } from "../email/email.service";
 import { orderApprovedTemplate, orderRejectedTemplate } from "../email/email.templates";
 import { EmailType } from "../email/email.types";
+import {
+  ensureCbrillianceVerificationColumns,
+  markUserCbrillianceEmailVerified,
+  normalizeCbrillianceEmail
+} from "../users/cbrillianceVerification.service";
 
 const paymentListQuery = `
   SELECT
@@ -50,6 +55,9 @@ const orderListQuery = `
     u.firstname,
     u.lastname,
     u.email AS user_email,
+    u.cbrilliance_email,
+    u.cbrilliance_email_verified,
+    u.cbrilliance_email_verified_at,
     verified_user.id AS verified_user_id,
     verified_user.firstname AS verified_firstname,
     verified_user.lastname AS verified_lastname,
@@ -102,6 +110,7 @@ export const getPendingOrders = async (
   req: FastifyRequest,
   reply: FastifyReply
 ) => {
+  await ensureCbrillianceVerificationColumns();
 
   const result = await pool.query(`
   ${orderListQuery}
@@ -116,6 +125,8 @@ export const getApprovedOrders = async (
   req: FastifyRequest,
   reply: FastifyReply
 ) => {
+  await ensureCbrillianceVerificationColumns();
+
   const result = await pool.query(`
   ${orderListQuery}
   WHERE o.payment_mode = 'INSTALLMENT'
@@ -130,6 +141,8 @@ export const getRejectedOrders = async (
   req: FastifyRequest,
   reply: FastifyReply
 ) => {
+  await ensureCbrillianceVerificationColumns();
+
   const result = await pool.query(`
   ${orderListQuery}
   WHERE o.status = 'REJECTED'
@@ -143,6 +156,8 @@ export const approveOrder = async (
   req: FastifyRequest,
   reply: FastifyReply
 ) => {
+  await ensureCbrillianceVerificationColumns();
+
   const { id } = req.params as any;
 
   const orderRes = await pool.query(`
@@ -154,14 +169,22 @@ export const approveOrder = async (
   if (!order) throw new Error("Order not found");
 
   if (order.payment_mode === "INSTALLMENT") {
+    const normalizedExternalEmail = normalizeCbrillianceEmail(order.external_email);
+
+    if (!normalizedExternalEmail) {
+      throw new Error("Cannot approve installment order because no Cbrilliance email was submitted");
+    }
+
     const verifiedEmailRes = await pool.query(
       `SELECT id FROM users WHERE LOWER(email) = LOWER($1)`,
-      [order.external_email]
+      [normalizedExternalEmail]
     );
 
     if (!verifiedEmailRes.rows[0]) {
       throw new Error("Cannot approve installment order because the submitted Cbrilliance email does not exist");
     }
+
+    await markUserCbrillianceEmailVerified(order.user_id, normalizedExternalEmail);
   }
 
   await pool.query(`

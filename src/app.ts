@@ -126,7 +126,7 @@ app.decorate("adminAuthenticate", async function (request: FastifyRequest, reply
 app.register(multipart, {
   limits: {
     fileSize: 40 * 1024 * 1024, // 40MB max per image
-    files: 4,
+    files: 7,
     parts: 30
   }
 });

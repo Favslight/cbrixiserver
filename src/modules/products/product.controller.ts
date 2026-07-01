@@ -3,8 +3,20 @@ import { FastifyRequest, FastifyReply } from "fastify";
 import { createProduct, deleteProduct, getActiveProducts, getActiveProductsByCategory, getAllProducts, updateProduct } from "./product.service";
 import { uploadToCloudinary } from "../../plugins/cloudinary";
 
+const MAX_PRODUCT_IMAGES = 7;
+
 type MultipartFieldValue = {
   value: string;
+};
+
+type ProductImageInput = {
+  url: string;
+  public_id?: string | null;
+};
+
+type UploadedProductImage = {
+  secure_url: string;
+  public_id: string;
 };
 
 const readFieldValue = (
@@ -23,13 +35,96 @@ const parseOptionalNumber = (value: string | undefined) => {
   return Number.isNaN(num) ? null : num;
 };
 
+const parseOptionalInteger = (value: string | undefined) => {
+  if (value === undefined || value === "") return undefined;
+  const num = Number(value);
+  return Number.isInteger(num) ? num : undefined;
+};
+
+const parseJsonArray = <T>(value: string | undefined): T[] | undefined => {
+  if (value === undefined || value === "") return undefined;
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed as T[] : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const normalizeExistingImages = (
+  imageManifest: ProductImageInput[] | undefined,
+  imageUrls: string[] | undefined,
+  imagePublicIds: (string | null | undefined)[] | undefined
+) => {
+  if (imageManifest) {
+    return imageManifest
+      .filter((image) => typeof image?.url === "string" && image.url.trim())
+      .map((image) => ({
+        url: image.url.trim(),
+        public_id: typeof image.public_id === "string" && image.public_id.trim()
+          ? image.public_id.trim()
+          : null
+      }));
+  }
+
+  if (!imageUrls) return [];
+
+  return imageUrls
+    .filter((url) => typeof url === "string" && url.trim())
+    .map((url, index) => ({
+      url: url.trim(),
+      public_id: typeof imagePublicIds?.[index] === "string" && imagePublicIds[index]?.trim()
+        ? imagePublicIds[index]!.trim()
+        : null
+    }));
+};
+
+const buildProductImagePayload = (
+  images: { url: string; public_id: string | null }[],
+  thumbnailIndex?: number,
+  thumbnailUrl?: string | null
+) => {
+  if (images.length > MAX_PRODUCT_IMAGES) {
+    throw new Error(`You can upload up to ${MAX_PRODUCT_IMAGES} images`);
+  }
+
+  if (!images.length) {
+    throw new Error("At least 1 product image is required");
+  }
+
+  let selectedIndex = thumbnailIndex ?? 0;
+  const normalizedThumbnailUrl = thumbnailUrl?.trim();
+
+  if (normalizedThumbnailUrl) {
+    const urlIndex = images.findIndex((image) => image.url === normalizedThumbnailUrl);
+    if (urlIndex === -1) {
+      throw new Error("Thumbnail image must be one of the product images");
+    }
+    selectedIndex = urlIndex;
+  }
+
+  if (selectedIndex < 0 || selectedIndex >= images.length) {
+    throw new Error("thumbnail_index is out of range");
+  }
+
+  const thumbnail = images[selectedIndex];
+
+  return {
+    image_url: thumbnail.url,
+    image_public_id: thumbnail.public_id,
+    image_urls: images.map((image) => image.url),
+    image_public_ids: images.map((image) => image.public_id ?? "")
+  };
+};
+
 export const createProductController = async (
   req: FastifyRequest,
   reply: FastifyReply
 ) => {
   const parts = req.parts();
   const fields: Record<string, MultipartFieldValue | MultipartFieldValue[] | undefined> = {};
-  const uploadResults: { secure_url: string; public_id: string }[] = [];
+  const uploadResults: UploadedProductImage[] = [];
 
   for await (const part of parts) {
     if (part.type === "file") {
@@ -37,8 +132,8 @@ export const createProductController = async (
         return reply.status(400).send({ message: "Only image files are allowed" });
       }
 
-      if (uploadResults.length > 4) {
-        return reply.status(400).send({ message: "You can upload up to 4 images" });
+      if (uploadResults.length >= MAX_PRODUCT_IMAGES) {
+        return reply.status(400).send({ message: `You can upload up to ${MAX_PRODUCT_IMAGES} images` });
       }
 
       const buffer = await part.toBuffer();
@@ -67,6 +162,10 @@ export const createProductController = async (
   const fineValue = readFieldValue(fields, "fine_percentage_on_default");
   const minWalletValue = readFieldValue(fields, "minimum_wallet_balance_required");
   const gracePeriodValue = readFieldValue(fields, "grace_period_days");
+  const thumbnailIndex = parseOptionalInteger(
+    readFieldValue(fields, "thumbnail_index") ?? readFieldValue(fields, "thumbnailIndex")
+  );
+  const thumbnailUrl = readFieldValue(fields, "thumbnail_url") ?? readFieldValue(fields, "thumbnailUrl");
 
   if (!name || !priceValue || !stockValue) {
     return reply.status(400).send({
@@ -82,15 +181,26 @@ export const createProductController = async (
     });
   }
 
+  let imagePayload;
+  try {
+    imagePayload = buildProductImagePayload(
+      uploadResults.map((upload) => ({
+        url: upload.secure_url,
+        public_id: upload.public_id
+      })),
+      thumbnailIndex,
+      thumbnailUrl
+    );
+  } catch (error: any) {
+    return reply.status(400).send({ message: error.message });
+  }
+
   const productData = {
     name,
     description,
     category,
     price,
-    image_url: uploadResults[0].secure_url,
-    image_public_id: uploadResults[0].public_id,
-    image_urls: uploadResults.map((u) => u.secure_url),
-    image_public_ids: uploadResults.map((u) => u.public_id),
+    ...imagePayload,
     stock,
     installment_enabled: installmentEnabledValue === "true",
     minimum_deposit_percentage: parseOptionalNumber(minDepositValue),
@@ -150,7 +260,12 @@ export const updateProductController = async (
     let category: string | undefined;
     let priceValue: string | undefined;
     let stockValue: string | undefined;
-    const uploadResults: { secure_url: string; public_id: string }[] = [];
+    let imagesManifest: ProductImageInput[] | undefined;
+    let existingImageUrls: string[] | undefined;
+    let existingImagePublicIds: string[] | undefined;
+    let thumbnailIndex: number | undefined;
+    let thumbnailUrl: string | undefined;
+    const uploadResults: UploadedProductImage[] = [];
 
     if (isMultipart) {
       const parts = req.parts();
@@ -162,8 +277,8 @@ export const updateProductController = async (
             return reply.status(400).send({ message: "Only image files are allowed" });
           }
 
-          if (uploadResults.length > 4) {
-            return reply.status(400).send({ message: "You can upload up to 4 images" });
+          if (uploadResults.length >= MAX_PRODUCT_IMAGES) {
+            return reply.status(400).send({ message: `You can upload up to ${MAX_PRODUCT_IMAGES} images` });
           }
 
           const buffer = await part.toBuffer();
@@ -182,6 +297,19 @@ export const updateProductController = async (
       category = readFieldValue(fields, "category");
       priceValue = readFieldValue(fields, "price");
       stockValue = readFieldValue(fields, "stock");
+      imagesManifest = parseJsonArray<ProductImageInput>(
+        readFieldValue(fields, "images_manifest") ?? readFieldValue(fields, "imagesManifest")
+      );
+      existingImageUrls = parseJsonArray<string>(
+        readFieldValue(fields, "existing_image_urls") ?? readFieldValue(fields, "image_urls")
+      );
+      existingImagePublicIds = parseJsonArray<string>(
+        readFieldValue(fields, "existing_image_public_ids") ?? readFieldValue(fields, "image_public_ids")
+      );
+      thumbnailIndex = parseOptionalInteger(
+        readFieldValue(fields, "thumbnail_index") ?? readFieldValue(fields, "thumbnailIndex")
+      );
+      thumbnailUrl = readFieldValue(fields, "thumbnail_url") ?? readFieldValue(fields, "thumbnailUrl");
     } else {
       const body = (req.body ?? {}) as Record<string, unknown>;
       name = typeof body.name === "string" ? body.name : undefined;
@@ -189,6 +317,37 @@ export const updateProductController = async (
       category = typeof body.category === "string" ? body.category : undefined;
       priceValue = body.price !== undefined ? String(body.price) : undefined;
       stockValue = body.stock !== undefined ? String(body.stock) : undefined;
+      imagesManifest = Array.isArray(body.images_manifest)
+        ? body.images_manifest as ProductImageInput[]
+        : Array.isArray(body.imagesManifest)
+          ? body.imagesManifest as ProductImageInput[]
+          : undefined;
+      existingImageUrls = Array.isArray(body.existing_image_urls)
+        ? body.existing_image_urls as string[]
+        : Array.isArray(body.image_urls)
+          ? body.image_urls as string[]
+          : undefined;
+      existingImagePublicIds = Array.isArray(body.existing_image_public_ids)
+        ? body.existing_image_public_ids as string[]
+        : Array.isArray(body.image_public_ids)
+          ? body.image_public_ids as string[]
+          : undefined;
+      thumbnailIndex = typeof body.thumbnail_index === "number"
+        ? body.thumbnail_index
+        : typeof body.thumbnailIndex === "number"
+          ? body.thumbnailIndex
+          : parseOptionalInteger(
+              body.thumbnail_index !== undefined
+                ? String(body.thumbnail_index)
+                : body.thumbnailIndex !== undefined
+                  ? String(body.thumbnailIndex)
+                  : undefined
+            );
+      thumbnailUrl = typeof body.thumbnail_url === "string"
+        ? body.thumbnail_url
+        : typeof body.thumbnailUrl === "string"
+          ? body.thumbnailUrl
+          : undefined;
     }
 
     const parsedPrice = priceValue !== undefined && priceValue !== "" ? Number(priceValue) : undefined;
@@ -210,11 +369,38 @@ export const updateProductController = async (
       stock: parsedStock
     };
 
-    if (uploadResults.length > 0) {
-      updateData.image_url = uploadResults[0].secure_url;
-      updateData.image_public_id = uploadResults[0].public_id;
-      updateData.image_urls = uploadResults.map((u) => u.secure_url);
-      updateData.image_public_ids = uploadResults.map((u) => u.public_id);
+    const existingImages = normalizeExistingImages(
+      imagesManifest,
+      existingImageUrls,
+      existingImagePublicIds
+    );
+
+    const shouldUpdateImages = Boolean(
+      imagesManifest
+      || existingImageUrls
+      || uploadResults.length
+      || thumbnailIndex !== undefined
+      || thumbnailUrl
+    );
+
+    if (shouldUpdateImages) {
+      const uploadedImages = uploadResults.map((upload) => ({
+        url: upload.secure_url,
+        public_id: upload.public_id
+      }));
+
+      const finalImages = existingImages.length || imagesManifest || existingImageUrls
+        ? [...existingImages, ...uploadedImages]
+        : uploadedImages;
+
+      try {
+        Object.assign(
+          updateData,
+          buildProductImagePayload(finalImages, thumbnailIndex, thumbnailUrl)
+        );
+      } catch (error: any) {
+        return reply.status(400).send({ message: error.message });
+      }
     }
 
     const product = await updateProduct(req.params.id, updateData);
