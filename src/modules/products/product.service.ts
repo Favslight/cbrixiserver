@@ -8,6 +8,8 @@ const ensureProductColumns = async () => {
     ensureProductColumnsPromise = (async () => {
       await pool.query(`
         ALTER TABLE products
+        ADD COLUMN IF NOT EXISTS image_url TEXT,
+        ADD COLUMN IF NOT EXISTS image_public_id TEXT,
         ADD COLUMN IF NOT EXISTS image_urls TEXT[] DEFAULT ARRAY[]::TEXT[],
         ADD COLUMN IF NOT EXISTS image_public_ids TEXT[] DEFAULT ARRAY[]::TEXT[]
       `);
@@ -16,6 +18,44 @@ const ensureProductColumns = async () => {
 
   await ensureProductColumnsPromise;
 };
+
+const productImageUrlSelect = `
+  CASE
+    WHEN image_url IS NOT NULL AND image_url <> '' THEN image_url
+    WHEN CARDINALITY(COALESCE(image_urls, ARRAY[]::TEXT[])) > 0 THEN image_urls[1]
+    ELSE NULL
+  END AS image_url
+`;
+
+const productImageUrlsSelect = `
+  CASE
+    WHEN CARDINALITY(COALESCE(image_urls, ARRAY[]::TEXT[])) > 0 THEN image_urls
+    WHEN image_url IS NOT NULL AND image_url <> '' THEN ARRAY[image_url]
+    ELSE ARRAY[]::TEXT[]
+  END AS image_urls
+`;
+
+const productSelectColumns = `
+  id,
+  name,
+  description,
+  category,
+  price,
+  ${productImageUrlSelect},
+  image_public_id,
+  ${productImageUrlsSelect},
+  COALESCE(image_public_ids, ARRAY[]::TEXT[]) AS image_public_ids,
+  stock,
+  installment_enabled,
+  minimum_deposit_percentage,
+  installment_duration_months,
+  fine_percentage_on_default,
+  minimum_wallet_balance_required,
+  grace_period_days,
+  is_active,
+  created_at,
+  updated_at
+`;
 
 export const createProduct = async (data: any) => {
   await ensureProductColumns();
@@ -58,9 +98,7 @@ export const getAllProducts = async () => {
   await ensureProductColumns();
 
   const result = await pool.query(`
-    SELECT *,
-           COALESCE(image_urls, ARRAY[]::TEXT[]) AS image_urls,
-           COALESCE(image_public_ids, ARRAY[]::TEXT[]) AS image_public_ids
+    SELECT ${productSelectColumns}
     FROM products
     WHERE is_active = true
     ORDER BY created_at DESC
@@ -162,8 +200,8 @@ export const getActiveProducts = async () => {
            description,
            category,
            price,
-           image_url,
-           COALESCE(image_urls, ARRAY[]::TEXT[]) AS image_urls,
+           ${productImageUrlSelect},
+           ${productImageUrlsSelect},
            stock
     FROM products
     WHERE is_active = true
@@ -188,8 +226,8 @@ export const getActiveProductsByCategory = async (category: string) => {
            description,
            category,
            price,
-           image_url,
-           COALESCE(image_urls, ARRAY[]::TEXT[]) AS image_urls,
+           ${productImageUrlSelect},
+           ${productImageUrlsSelect},
            stock
     FROM products
     WHERE is_active = true
