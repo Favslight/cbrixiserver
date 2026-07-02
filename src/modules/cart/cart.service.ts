@@ -1,5 +1,6 @@
 // src/modules/cart/cart.service.ts
 import { pool } from "../../config/db";
+import { ensureProductColumns } from "../products/product.service";
 
 export const addToCart = async (
   userId: string,
@@ -58,6 +59,8 @@ export const addToCart = async (
 
 
 export const getCart = async (userId: string) => {
+  await ensureProductColumns();
+
   const result = await pool.query(
     `
     SELECT
@@ -66,6 +69,14 @@ export const getCart = async (userId: string) => {
       cart_items.quantity,
       products.name,
       products.price,
+      COALESCE(products.discount_enabled, FALSE) AS discount_enabled,
+      COALESCE(products.discount_percentage, 0) AS discount_percentage,
+      COALESCE(products.discount_amount, 0) AS discount_amount,
+      COALESCE(products.discounted_price, products.price) AS discounted_price,
+      CASE
+        WHEN COALESCE(products.discount_enabled, FALSE) THEN COALESCE(products.discounted_price, products.price)
+        ELSE products.price
+      END AS effective_price,
       products.image_url,
       products.image_urls,
       products.installment_enabled,

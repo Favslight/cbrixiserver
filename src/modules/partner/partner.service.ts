@@ -1,4 +1,5 @@
 import { pool } from "../../config/db";
+import { ensureProductColumns } from "../products/product.service";
 import {
   PartnerProductFilters,
   PartnerSalesRecordInput
@@ -20,6 +21,14 @@ const partnerProductSelect = `
   p.description,
   p.category,
   p.price::FLOAT8 AS price,
+  COALESCE(p.discount_enabled, FALSE) AS discount_enabled,
+  COALESCE(p.discount_percentage, 0)::FLOAT8 AS discount_percentage,
+  COALESCE(p.discount_amount, 0)::FLOAT8 AS discount_amount,
+  COALESCE(p.discounted_price, p.price)::FLOAT8 AS discounted_price,
+  CASE
+    WHEN COALESCE(p.discount_enabled, FALSE) THEN COALESCE(p.discounted_price, p.price)
+    ELSE p.price
+  END::FLOAT8 AS effective_price,
   CASE
     WHEN CARDINALITY(COALESCE(p.image_urls, ARRAY[]::TEXT[])) > 0
       THEN p.image_urls
@@ -34,6 +43,8 @@ const partnerProductSelect = `
 export const getPartnerProducts = async (
   filters: PartnerProductFilters
 ) => {
+  await ensureProductColumns();
+
   const conditions = ["p.is_active = TRUE"];
   const values: unknown[] = [];
 
@@ -53,12 +64,22 @@ export const getPartnerProducts = async (
 
   if (filters.min_price !== undefined) {
     values.push(filters.min_price);
-    conditions.push(`p.price >= $${values.length}`);
+    conditions.push(`(
+      CASE
+        WHEN COALESCE(p.discount_enabled, FALSE) THEN COALESCE(p.discounted_price, p.price)
+        ELSE p.price
+      END
+    ) >= $${values.length}`);
   }
 
   if (filters.max_price !== undefined) {
     values.push(filters.max_price);
-    conditions.push(`p.price <= $${values.length}`);
+    conditions.push(`(
+      CASE
+        WHEN COALESCE(p.discount_enabled, FALSE) THEN COALESCE(p.discounted_price, p.price)
+        ELSE p.price
+      END
+    ) <= $${values.length}`);
   }
 
   const offset = (filters.page - 1) * filters.limit;
@@ -90,6 +111,8 @@ export const getPartnerProducts = async (
 };
 
 export const getPartnerProductById = async (id: string) => {
+  await ensureProductColumns();
+
   const result = await pool.query(
     `SELECT ${partnerProductSelect}
      FROM products p

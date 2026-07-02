@@ -2,6 +2,7 @@ import { FastifyReply, FastifyRequest } from "fastify";
 import { adminLoginService } from "./admin.service";
 import { pool } from "../../config/db";
 import { ensureCbrillianceVerificationColumns } from "../users/cbrillianceVerification.service";
+import { ensureProductColumns } from "../products/product.service";
 
 interface AdminLoginBody {
   email: string;
@@ -36,6 +37,7 @@ export const getAllUsersDetailsController = async (
 ) => {
   try {
     await ensureCbrillianceVerificationColumns();
+    await ensureProductColumns();
 
     const usersRes = await pool.query(`
       SELECT
@@ -75,7 +77,19 @@ export const getAllUsersDetailsController = async (
       const detailedOrders = [];
       for (const order of orders) {
         const itemsRes = await pool.query(
-          `SELECT order_items.*, products.name, products.price, products.installment_duration_months
+          `SELECT
+             order_items.*,
+             products.name,
+             products.price,
+             COALESCE(products.discount_enabled, FALSE) AS discount_enabled,
+             COALESCE(products.discount_percentage, 0) AS discount_percentage,
+             COALESCE(products.discount_amount, 0) AS discount_amount,
+             COALESCE(products.discounted_price, products.price) AS discounted_price,
+             CASE
+               WHEN COALESCE(products.discount_enabled, FALSE) THEN COALESCE(products.discounted_price, products.price)
+               ELSE products.price
+             END AS effective_price,
+             products.installment_duration_months
            FROM order_items
            JOIN products ON products.id = order_items.product_id
            WHERE order_items.order_id=$1`,

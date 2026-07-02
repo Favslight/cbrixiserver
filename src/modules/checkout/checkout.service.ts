@@ -64,13 +64,13 @@ export const createOrderFromCart = async (
   }
 
   const totalAmount = cartItems.reduce(
-    (sum, item) => sum + Number(item.price) * item.quantity,
+    (sum, item) => sum + Number(item.effective_price ?? item.price) * item.quantity,
     0
   );
 
   const depositAmount = paymentMode === "INSTALLMENT"
     ? cartItems.reduce((sum, item) => {
-        const lineTotal = Number(item.price) * item.quantity;
+        const lineTotal = Number(item.effective_price ?? item.price) * item.quantity;
         const depositPercentage = Number(item.minimum_deposit_percentage ?? 50);
         return sum + (lineTotal * depositPercentage) / 100;
       }, 0)
@@ -96,7 +96,7 @@ export const createOrderFromCart = async (
     await pool.query(`
       INSERT INTO order_items (order_id, product_id, quantity, price_at_purchase)
       VALUES ($1,$2,$3,$4)
-    `, [order.id, item.product_id, item.quantity, item.price]);
+    `, [order.id, item.product_id, item.quantity, item.effective_price ?? item.price]);
   }
 
   if (paymentMode === "INSTALLMENT" && installmentBalance > 0) {
@@ -167,6 +167,14 @@ export const getUserOrders = async (userId: string) => {
         products.name,
         products.description,
         products.price,
+        COALESCE(products.discount_enabled, FALSE) AS discount_enabled,
+        COALESCE(products.discount_percentage, 0) AS discount_percentage,
+        COALESCE(products.discount_amount, 0) AS discount_amount,
+        COALESCE(products.discounted_price, products.price) AS discounted_price,
+        CASE
+          WHEN COALESCE(products.discount_enabled, FALSE) THEN COALESCE(products.discounted_price, products.price)
+          ELSE products.price
+        END AS effective_price,
         products.image_url,
         products.image_urls,
         products.installment_duration_months,

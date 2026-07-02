@@ -1,6 +1,6 @@
 // src/modules/products/product.controller.ts
 import { FastifyRequest, FastifyReply } from "fastify";
-import { createProduct, deleteProduct, getActiveProducts, getActiveProductsByCategory, getAllProducts, updateProduct } from "./product.service";
+import { calculateProductDiscount, createProduct, deleteProduct, getActiveProducts, getActiveProductsByCategory, getAllProducts, updateProduct } from "./product.service";
 import { uploadToCloudinary } from "../../plugins/cloudinary";
 
 const MAX_PRODUCT_IMAGES = 7;
@@ -39,6 +39,22 @@ const parseOptionalInteger = (value: string | undefined) => {
   if (value === undefined || value === "") return undefined;
   const num = Number(value);
   return Number.isInteger(num) ? num : undefined;
+};
+
+const parseOptionalBoolean = (value: string | undefined) => {
+  if (value === undefined || value === "") return undefined;
+  const normalized = value.trim().toLowerCase();
+
+  if (["true", "1", "yes", "on"].includes(normalized)) return true;
+  if (["false", "0", "no", "off"].includes(normalized)) return false;
+
+  return null;
+};
+
+const parseNumberField = (value: string | undefined) => {
+  if (value === undefined || value === "") return undefined;
+  const num = Number(value);
+  return Number.isNaN(num) ? null : num;
 };
 
 const parseJsonArray = <T>(value: string | undefined): T[] | undefined => {
@@ -118,6 +134,52 @@ const buildProductImagePayload = (
   };
 };
 
+export const previewProductDiscountController = async (
+  req: FastifyRequest,
+  reply: FastifyReply
+) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const priceValue = body.price !== undefined ? String(body.price) : undefined;
+  const discountEnabledValue = body.discount_enabled !== undefined
+    ? String(body.discount_enabled)
+    : body.discountEnabled !== undefined
+      ? String(body.discountEnabled)
+      : undefined;
+  const discountPercentageValue = body.discount_percentage !== undefined
+    ? String(body.discount_percentage)
+    : body.discountPercentage !== undefined
+      ? String(body.discountPercentage)
+      : undefined;
+
+  const price = parseNumberField(priceValue);
+  const parsedDiscountEnabled = parseOptionalBoolean(discountEnabledValue);
+  const discountEnabled = parsedDiscountEnabled ?? false;
+  const discountPercentage = parseNumberField(discountPercentageValue);
+
+  if (price === undefined) {
+    return reply.status(400).send({ message: "price is required" });
+  }
+
+  if (price === null) {
+    return reply.status(400).send({ message: "price must be a valid number" });
+  }
+
+  if (parsedDiscountEnabled === null) {
+    return reply.status(400).send({ message: "discount_enabled must be true or false" });
+  }
+
+  if (discountPercentage === null) {
+    return reply.status(400).send({ message: "discount_percentage must be a valid number" });
+  }
+
+  try {
+    const discount = calculateProductDiscount(price, discountEnabled, discountPercentage);
+    return reply.send({ success: true, discount });
+  } catch (error: any) {
+    return reply.status(400).send({ message: error.message });
+  }
+};
+
 export const createProductController = async (
   req: FastifyRequest,
   reply: FastifyReply
@@ -162,6 +224,8 @@ export const createProductController = async (
   const fineValue = readFieldValue(fields, "fine_percentage_on_default");
   const minWalletValue = readFieldValue(fields, "minimum_wallet_balance_required");
   const gracePeriodValue = readFieldValue(fields, "grace_period_days");
+  const discountEnabledValue = readFieldValue(fields, "discount_enabled") ?? readFieldValue(fields, "discountEnabled");
+  const discountPercentageValue = readFieldValue(fields, "discount_percentage") ?? readFieldValue(fields, "discountPercentage");
   const thumbnailIndex = parseOptionalInteger(
     readFieldValue(fields, "thumbnail_index") ?? readFieldValue(fields, "thumbnailIndex")
   );
@@ -179,6 +243,24 @@ export const createProductController = async (
     return reply.status(400).send({
       message: "price and stock must be valid numbers"
     });
+  }
+
+  const parsedDiscountEnabled = parseOptionalBoolean(discountEnabledValue);
+  const discountEnabled = parsedDiscountEnabled ?? false;
+  const discountPercentage = parseNumberField(discountPercentageValue);
+
+  if (parsedDiscountEnabled === null) {
+    return reply.status(400).send({ message: "discount_enabled must be true or false" });
+  }
+
+  if (discountPercentage === null) {
+    return reply.status(400).send({ message: "discount_percentage must be a valid number" });
+  }
+
+  try {
+    calculateProductDiscount(price, discountEnabled, discountPercentage);
+  } catch (error: any) {
+    return reply.status(400).send({ message: error.message });
   }
 
   let imagePayload;
@@ -207,7 +289,9 @@ export const createProductController = async (
     installment_duration_months: parseOptionalNumber(durationValue),
     fine_percentage_on_default: parseOptionalNumber(fineValue),
     minimum_wallet_balance_required: parseOptionalNumber(minWalletValue),
-    grace_period_days: parseOptionalNumber(gracePeriodValue)
+    grace_period_days: parseOptionalNumber(gracePeriodValue),
+    discount_enabled: discountEnabled,
+    discount_percentage: discountPercentage
   };
 
   const product = await createProduct(productData);
@@ -260,6 +344,8 @@ export const updateProductController = async (
     let category: string | undefined;
     let priceValue: string | undefined;
     let stockValue: string | undefined;
+    let discountEnabledValue: string | undefined;
+    let discountPercentageValue: string | undefined;
     let imagesManifest: ProductImageInput[] | undefined;
     let existingImageUrls: string[] | undefined;
     let existingImagePublicIds: string[] | undefined;
@@ -297,6 +383,8 @@ export const updateProductController = async (
       category = readFieldValue(fields, "category");
       priceValue = readFieldValue(fields, "price");
       stockValue = readFieldValue(fields, "stock");
+      discountEnabledValue = readFieldValue(fields, "discount_enabled") ?? readFieldValue(fields, "discountEnabled");
+      discountPercentageValue = readFieldValue(fields, "discount_percentage") ?? readFieldValue(fields, "discountPercentage");
       imagesManifest = parseJsonArray<ProductImageInput>(
         readFieldValue(fields, "images_manifest") ?? readFieldValue(fields, "imagesManifest")
       );
@@ -317,6 +405,16 @@ export const updateProductController = async (
       category = typeof body.category === "string" ? body.category : undefined;
       priceValue = body.price !== undefined ? String(body.price) : undefined;
       stockValue = body.stock !== undefined ? String(body.stock) : undefined;
+      discountEnabledValue = body.discount_enabled !== undefined
+        ? String(body.discount_enabled)
+        : body.discountEnabled !== undefined
+          ? String(body.discountEnabled)
+          : undefined;
+      discountPercentageValue = body.discount_percentage !== undefined
+        ? String(body.discount_percentage)
+        : body.discountPercentage !== undefined
+          ? String(body.discountPercentage)
+          : undefined;
       imagesManifest = Array.isArray(body.images_manifest)
         ? body.images_manifest as ProductImageInput[]
         : Array.isArray(body.imagesManifest)
@@ -352,6 +450,8 @@ export const updateProductController = async (
 
     const parsedPrice = priceValue !== undefined && priceValue !== "" ? Number(priceValue) : undefined;
     const parsedStock = stockValue !== undefined && stockValue !== "" ? Number(stockValue) : undefined;
+    const parsedDiscountEnabled = parseOptionalBoolean(discountEnabledValue);
+    const parsedDiscountPercentage = parseNumberField(discountPercentageValue);
 
     if (parsedPrice !== undefined && Number.isNaN(parsedPrice)) {
       return reply.status(400).send({ message: "price must be a valid number" });
@@ -361,12 +461,22 @@ export const updateProductController = async (
       return reply.status(400).send({ message: "stock must be a valid number" });
     }
 
+    if (parsedDiscountEnabled === null) {
+      return reply.status(400).send({ message: "discount_enabled must be true or false" });
+    }
+
+    if (parsedDiscountPercentage === null) {
+      return reply.status(400).send({ message: "discount_percentage must be a valid number" });
+    }
+
     const updateData: any = {
       name,
       description,
       category,
       price: parsedPrice,
-      stock: parsedStock
+      stock: parsedStock,
+      discount_enabled: parsedDiscountEnabled,
+      discount_percentage: parsedDiscountPercentage
     };
 
     const existingImages = normalizeExistingImages(
@@ -415,6 +525,12 @@ export const updateProductController = async (
       return reply.status(400).send({ message: error.message });
     }
     if (error?.message === "Product id is required" || error?.message === "Update payload is required") {
+      return reply.status(400).send({ message: error.message });
+    }
+    if (
+      error?.message === "price must be a valid non-negative number"
+      || error?.message === "discount_percentage must be greater than 0 and less than or equal to 100 when discount is active"
+    ) {
       return reply.status(400).send({ message: error.message });
     }
 

@@ -19,7 +19,12 @@ type AdminProduct = {
   name: string;
   description?: string | null;
   category?: string | null;
-  price: string | number;
+  price: string | number; // original normal price
+  discount_enabled: boolean;
+  discount_percentage: string | number;
+  discount_amount: string | number;
+  discounted_price: string | number;
+  effective_price: string | number;
   image_url?: string | null;
   image_public_id?: string | null;
   image_urls: string[];
@@ -46,6 +51,8 @@ price: string;
 stock: string;
 description?: string;
 category?: string;
+discount_enabled?: "true" | "false";
+discount_percentage?: string; // required when discount_enabled is "true"
 thumbnail_index?: string; // zero-based index in uploaded file order, defaults to 0
 images: File[]; // append up to 7 image files
 ```
@@ -57,6 +64,10 @@ const form = new FormData();
 form.append("name", name);
 form.append("price", String(price));
 form.append("stock", String(stock));
+form.append("discount_enabled", String(discountEnabled));
+if (discountEnabled) {
+  form.append("discount_percentage", String(discountPercentage));
+}
 form.append("thumbnail_index", "2");
 
 for (const file of orderedFiles) {

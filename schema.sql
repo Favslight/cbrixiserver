@@ -22,6 +22,10 @@ CREATE TABLE products (
     description TEXT,
     category VARCHAR(255),
     price NUMERIC(15,2) NOT NULL,
+    discount_enabled BOOLEAN DEFAULT FALSE,
+    discount_percentage NUMERIC(5,2) DEFAULT 0,
+    discount_amount NUMERIC(15,2) DEFAULT 0,
+    discounted_price NUMERIC(15,2),
     image_url TEXT,
     image_public_id TEXT,
     image_urls TEXT[] DEFAULT ARRAY[]::TEXT[],
@@ -197,7 +201,31 @@ ADD COLUMN IF NOT EXISTS category VARCHAR(255),
 ADD COLUMN IF NOT EXISTS image_url TEXT,
 ADD COLUMN IF NOT EXISTS image_public_id TEXT,
 ADD COLUMN IF NOT EXISTS image_urls TEXT[] DEFAULT ARRAY[]::TEXT[],
-ADD COLUMN IF NOT EXISTS image_public_ids TEXT[] DEFAULT ARRAY[]::TEXT[];
+ADD COLUMN IF NOT EXISTS image_public_ids TEXT[] DEFAULT ARRAY[]::TEXT[],
+ADD COLUMN IF NOT EXISTS discount_enabled BOOLEAN DEFAULT FALSE,
+ADD COLUMN IF NOT EXISTS discount_percentage NUMERIC(5,2) DEFAULT 0,
+ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(15,2) DEFAULT 0,
+ADD COLUMN IF NOT EXISTS discounted_price NUMERIC(15,2);
+
+UPDATE products
+SET
+    discount_enabled = COALESCE(discount_enabled, FALSE),
+    discount_percentage = CASE
+        WHEN COALESCE(discount_enabled, FALSE) THEN COALESCE(discount_percentage, 0)
+        ELSE 0
+    END,
+    discount_amount = CASE
+        WHEN COALESCE(discount_enabled, FALSE) THEN ROUND((price * COALESCE(discount_percentage, 0)) / 100, 2)
+        ELSE 0
+    END,
+    discounted_price = CASE
+        WHEN COALESCE(discount_enabled, FALSE) THEN GREATEST(ROUND(price - ((price * COALESCE(discount_percentage, 0)) / 100), 2), 0)
+        ELSE price
+    END
+WHERE discounted_price IS NULL
+   OR discount_amount IS NULL
+   OR discount_percentage IS NULL
+   OR discount_enabled IS NULL;
 
 ALTER TABLE orders
 ADD COLUMN IF NOT EXISTS external_email VARCHAR(150);

@@ -3,7 +3,51 @@ import { pool } from "../../config/db";
 
 let ensureProductColumnsPromise: Promise<void> | null = null;
 
-const ensureProductColumns = async () => {
+const roundMoney = (value: number) => Math.round(value * 100) / 100;
+
+export const calculateProductDiscount = (
+  priceInput: number | string,
+  discountEnabledInput: boolean,
+  discountPercentageInput?: number | string | null
+) => {
+  const price = Number(priceInput);
+
+  if (!Number.isFinite(price) || price < 0) {
+    throw new Error("price must be a valid non-negative number");
+  }
+
+  const discountEnabled = discountEnabledInput === true;
+  const discountPercentage = discountEnabled
+    ? Number(discountPercentageInput ?? 0)
+    : 0;
+
+  if (
+    discountEnabled
+    && (!Number.isFinite(discountPercentage) || discountPercentage <= 0 || discountPercentage > 100)
+  ) {
+    throw new Error("discount_percentage must be greater than 0 and less than or equal to 100 when discount is active");
+  }
+
+  const normalizedPrice = roundMoney(price);
+  const normalizedPercentage = discountEnabled ? roundMoney(discountPercentage) : 0;
+  const discountAmount = discountEnabled
+    ? roundMoney((normalizedPrice * normalizedPercentage) / 100)
+    : 0;
+  const discountedPrice = discountEnabled
+    ? Math.max(roundMoney(normalizedPrice - discountAmount), 0)
+    : normalizedPrice;
+
+  return {
+    price: normalizedPrice,
+    discount_enabled: discountEnabled,
+    discount_percentage: normalizedPercentage,
+    discount_amount: discountAmount,
+    discounted_price: discountedPrice,
+    effective_price: discountedPrice
+  };
+};
+
+export const ensureProductColumns = async () => {
   if (!ensureProductColumnsPromise) {
     ensureProductColumnsPromise = (async () => {
       await pool.query(`
@@ -11,7 +55,33 @@ const ensureProductColumns = async () => {
         ADD COLUMN IF NOT EXISTS image_url TEXT,
         ADD COLUMN IF NOT EXISTS image_public_id TEXT,
         ADD COLUMN IF NOT EXISTS image_urls TEXT[] DEFAULT ARRAY[]::TEXT[],
-        ADD COLUMN IF NOT EXISTS image_public_ids TEXT[] DEFAULT ARRAY[]::TEXT[]
+        ADD COLUMN IF NOT EXISTS image_public_ids TEXT[] DEFAULT ARRAY[]::TEXT[],
+        ADD COLUMN IF NOT EXISTS discount_enabled BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS discount_percentage NUMERIC(5,2) DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(15,2) DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS discounted_price NUMERIC(15,2)
+      `);
+
+      await pool.query(`
+        UPDATE products
+        SET
+          discount_enabled = COALESCE(discount_enabled, FALSE),
+          discount_percentage = CASE
+            WHEN COALESCE(discount_enabled, FALSE) THEN COALESCE(discount_percentage, 0)
+            ELSE 0
+          END,
+          discount_amount = CASE
+            WHEN COALESCE(discount_enabled, FALSE) THEN ROUND((price * COALESCE(discount_percentage, 0)) / 100, 2)
+            ELSE 0
+          END,
+          discounted_price = CASE
+            WHEN COALESCE(discount_enabled, FALSE) THEN GREATEST(ROUND(price - ((price * COALESCE(discount_percentage, 0)) / 100), 2), 0)
+            ELSE price
+          END
+        WHERE discounted_price IS NULL
+           OR discount_amount IS NULL
+           OR discount_percentage IS NULL
+           OR discount_enabled IS NULL
       `);
     })();
   }
@@ -41,6 +111,14 @@ const productSelectColumns = `
   description,
   category,
   price,
+  COALESCE(discount_enabled, FALSE) AS discount_enabled,
+  COALESCE(discount_percentage, 0) AS discount_percentage,
+  COALESCE(discount_amount, 0) AS discount_amount,
+  COALESCE(discounted_price, price) AS discounted_price,
+  CASE
+    WHEN COALESCE(discount_enabled, FALSE) THEN COALESCE(discounted_price, price)
+    ELSE price
+  END AS effective_price,
   ${productImageUrlSelect},
   image_public_id,
   ${productImageUrlsSelect},
@@ -59,6 +137,11 @@ const productSelectColumns = `
 
 export const createProduct = async (data: any) => {
   await ensureProductColumns();
+  const discount = calculateProductDiscount(
+    data.price,
+    data.discount_enabled === true,
+    data.discount_percentage
+  );
 
   const query = `
   INSERT INTO products
@@ -66,17 +149,18 @@ export const createProduct = async (data: any) => {
  image_urls, image_public_ids,
  stock, installment_enabled, minimum_deposit_percentage,
  installment_duration_months, fine_percentage_on_default,
- minimum_wallet_balance_required, grace_period_days)
+ minimum_wallet_balance_required, grace_period_days,
+ discount_enabled, discount_percentage, discount_amount, discounted_price)
   VALUES
-  ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-  RETURNING *
+  ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+  RETURNING ${productSelectColumns}
   `;
 
   const values = [
     data.name,
     data.description,
     data.category,
-    data.price,
+    discount.price,
     data.image_url,
     data.image_public_id,
     data.image_urls,
@@ -87,7 +171,11 @@ export const createProduct = async (data: any) => {
     data.installment_duration_months,
     data.fine_percentage_on_default,
     data.minimum_wallet_balance_required,
-    data.grace_period_days
+    data.grace_period_days,
+    discount.discount_enabled,
+    discount.discount_percentage,
+    discount.discount_amount,
+    discount.discounted_price
   ];
 
   const result = await pool.query(query, values);
@@ -148,7 +236,9 @@ export const updateProduct = async (id: string, data: any) => {
     "image_public_id",
     "image_urls",
     "image_public_ids",
-    "stock"
+    "stock",
+    "discount_enabled",
+    "discount_percentage"
   ].some((key) => data[key] !== undefined);
 
   if (!hasAnyUpdateField) {
@@ -156,6 +246,21 @@ export const updateProduct = async (id: string, data: any) => {
   }
 
   await ensureProductColumns();
+
+  const current = await pool.query(
+    `SELECT price, discount_enabled, discount_percentage FROM products WHERE id=$1`,
+    [id]
+  );
+
+  if (!current.rows[0]) {
+    return null;
+  }
+
+  const discount = calculateProductDiscount(
+    data.price ?? current.rows[0].price,
+    data.discount_enabled ?? current.rows[0].discount_enabled,
+    data.discount_percentage ?? current.rows[0].discount_percentage
+  );
 
   const query = `
   UPDATE products
@@ -168,9 +273,13 @@ export const updateProduct = async (id: string, data: any) => {
       image_urls=COALESCE($7, image_urls),
       image_public_ids=COALESCE($8, image_public_ids),
       stock=COALESCE($9, stock),
+      discount_enabled=$10,
+      discount_percentage=$11,
+      discount_amount=$12,
+      discounted_price=$13,
       updated_at=NOW()
-  WHERE id=$10
-  RETURNING *
+  WHERE id=$14
+  RETURNING ${productSelectColumns}
   `;
 
   const values = [
@@ -183,6 +292,10 @@ export const updateProduct = async (id: string, data: any) => {
     data.image_urls,
     data.image_public_ids,
     data.stock,
+    discount.discount_enabled,
+    discount.discount_percentage,
+    discount.discount_amount,
+    discount.discounted_price,
     id
   ];
 
@@ -200,6 +313,14 @@ export const getActiveProducts = async () => {
            description,
            category,
            price,
+           COALESCE(discount_enabled, FALSE) AS discount_enabled,
+           COALESCE(discount_percentage, 0) AS discount_percentage,
+           COALESCE(discount_amount, 0) AS discount_amount,
+           COALESCE(discounted_price, price) AS discounted_price,
+           CASE
+             WHEN COALESCE(discount_enabled, FALSE) THEN COALESCE(discounted_price, price)
+             ELSE price
+           END AS effective_price,
            ${productImageUrlSelect},
            ${productImageUrlsSelect},
            stock
@@ -226,6 +347,14 @@ export const getActiveProductsByCategory = async (category: string) => {
            description,
            category,
            price,
+           COALESCE(discount_enabled, FALSE) AS discount_enabled,
+           COALESCE(discount_percentage, 0) AS discount_percentage,
+           COALESCE(discount_amount, 0) AS discount_amount,
+           COALESCE(discounted_price, price) AS discounted_price,
+           CASE
+             WHEN COALESCE(discount_enabled, FALSE) THEN COALESCE(discounted_price, price)
+             ELSE price
+           END AS effective_price,
            ${productImageUrlSelect},
            ${productImageUrlsSelect},
            stock
