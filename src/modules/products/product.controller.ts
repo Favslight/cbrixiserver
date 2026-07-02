@@ -344,6 +344,12 @@ export const updateProductController = async (
     let category: string | undefined;
     let priceValue: string | undefined;
     let stockValue: string | undefined;
+    let installmentEnabledValue: string | undefined;
+    let minDepositValue: string | undefined;
+    let durationValue: string | undefined;
+    let fineValue: string | undefined;
+    let minWalletValue: string | undefined;
+    let gracePeriodValue: string | undefined;
     let discountEnabledValue: string | undefined;
     let discountPercentageValue: string | undefined;
     let imagesManifest: ProductImageInput[] | undefined;
@@ -383,6 +389,12 @@ export const updateProductController = async (
       category = readFieldValue(fields, "category");
       priceValue = readFieldValue(fields, "price");
       stockValue = readFieldValue(fields, "stock");
+      installmentEnabledValue = readFieldValue(fields, "installment_enabled") ?? readFieldValue(fields, "installmentEnabled");
+      minDepositValue = readFieldValue(fields, "minimum_deposit_percentage") ?? readFieldValue(fields, "minimumDepositPercentage");
+      durationValue = readFieldValue(fields, "installment_duration_months") ?? readFieldValue(fields, "installmentDurationMonths");
+      fineValue = readFieldValue(fields, "fine_percentage_on_default") ?? readFieldValue(fields, "finePercentageOnDefault");
+      minWalletValue = readFieldValue(fields, "minimum_wallet_balance_required") ?? readFieldValue(fields, "minimumWalletBalanceRequired");
+      gracePeriodValue = readFieldValue(fields, "grace_period_days") ?? readFieldValue(fields, "gracePeriodDays");
       discountEnabledValue = readFieldValue(fields, "discount_enabled") ?? readFieldValue(fields, "discountEnabled");
       discountPercentageValue = readFieldValue(fields, "discount_percentage") ?? readFieldValue(fields, "discountPercentage");
       imagesManifest = parseJsonArray<ProductImageInput>(
@@ -405,6 +417,36 @@ export const updateProductController = async (
       category = typeof body.category === "string" ? body.category : undefined;
       priceValue = body.price !== undefined ? String(body.price) : undefined;
       stockValue = body.stock !== undefined ? String(body.stock) : undefined;
+      installmentEnabledValue = body.installment_enabled !== undefined
+        ? String(body.installment_enabled)
+        : body.installmentEnabled !== undefined
+          ? String(body.installmentEnabled)
+          : undefined;
+      minDepositValue = body.minimum_deposit_percentage !== undefined
+        ? String(body.minimum_deposit_percentage)
+        : body.minimumDepositPercentage !== undefined
+          ? String(body.minimumDepositPercentage)
+          : undefined;
+      durationValue = body.installment_duration_months !== undefined
+        ? String(body.installment_duration_months)
+        : body.installmentDurationMonths !== undefined
+          ? String(body.installmentDurationMonths)
+          : undefined;
+      fineValue = body.fine_percentage_on_default !== undefined
+        ? String(body.fine_percentage_on_default)
+        : body.finePercentageOnDefault !== undefined
+          ? String(body.finePercentageOnDefault)
+          : undefined;
+      minWalletValue = body.minimum_wallet_balance_required !== undefined
+        ? String(body.minimum_wallet_balance_required)
+        : body.minimumWalletBalanceRequired !== undefined
+          ? String(body.minimumWalletBalanceRequired)
+          : undefined;
+      gracePeriodValue = body.grace_period_days !== undefined
+        ? String(body.grace_period_days)
+        : body.gracePeriodDays !== undefined
+          ? String(body.gracePeriodDays)
+          : undefined;
       discountEnabledValue = body.discount_enabled !== undefined
         ? String(body.discount_enabled)
         : body.discountEnabled !== undefined
@@ -450,6 +492,12 @@ export const updateProductController = async (
 
     const parsedPrice = priceValue !== undefined && priceValue !== "" ? Number(priceValue) : undefined;
     const parsedStock = stockValue !== undefined && stockValue !== "" ? Number(stockValue) : undefined;
+    const parsedInstallmentEnabled = parseOptionalBoolean(installmentEnabledValue);
+    const parsedMinDeposit = parseNumberField(minDepositValue);
+    const parsedDuration = parseNumberField(durationValue);
+    const parsedFine = parseNumberField(fineValue);
+    const parsedMinWallet = parseNumberField(minWalletValue);
+    const parsedGracePeriod = parseNumberField(gracePeriodValue);
     const parsedDiscountEnabled = parseOptionalBoolean(discountEnabledValue);
     const parsedDiscountPercentage = parseNumberField(discountPercentageValue);
 
@@ -459,6 +507,30 @@ export const updateProductController = async (
 
     if (parsedStock !== undefined && Number.isNaN(parsedStock)) {
       return reply.status(400).send({ message: "stock must be a valid number" });
+    }
+
+    if (parsedInstallmentEnabled === null) {
+      return reply.status(400).send({ message: "installment_enabled must be true or false" });
+    }
+
+    if (parsedMinDeposit === null) {
+      return reply.status(400).send({ message: "minimum_deposit_percentage must be a valid number" });
+    }
+
+    if (parsedDuration === null) {
+      return reply.status(400).send({ message: "installment_duration_months must be a valid number" });
+    }
+
+    if (parsedFine === null) {
+      return reply.status(400).send({ message: "fine_percentage_on_default must be a valid number" });
+    }
+
+    if (parsedMinWallet === null) {
+      return reply.status(400).send({ message: "minimum_wallet_balance_required must be a valid number" });
+    }
+
+    if (parsedGracePeriod === null) {
+      return reply.status(400).send({ message: "grace_period_days must be a valid number" });
     }
 
     if (parsedDiscountEnabled === null) {
@@ -475,6 +547,12 @@ export const updateProductController = async (
       category,
       price: parsedPrice,
       stock: parsedStock,
+      installment_enabled: parsedInstallmentEnabled,
+      minimum_deposit_percentage: parsedMinDeposit,
+      installment_duration_months: parsedDuration,
+      fine_percentage_on_default: parsedFine,
+      minimum_wallet_balance_required: parsedMinWallet,
+      grace_period_days: parsedGracePeriod,
       discount_enabled: parsedDiscountEnabled,
       discount_percentage: parsedDiscountPercentage
     };

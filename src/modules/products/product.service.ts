@@ -59,7 +59,13 @@ export const ensureProductColumns = async () => {
         ADD COLUMN IF NOT EXISTS discount_enabled BOOLEAN DEFAULT FALSE,
         ADD COLUMN IF NOT EXISTS discount_percentage NUMERIC(5,2) DEFAULT 0,
         ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(15,2) DEFAULT 0,
-        ADD COLUMN IF NOT EXISTS discounted_price NUMERIC(15,2)
+        ADD COLUMN IF NOT EXISTS discounted_price NUMERIC(15,2),
+        ADD COLUMN IF NOT EXISTS installment_enabled BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS minimum_deposit_percentage INTEGER DEFAULT 50,
+        ADD COLUMN IF NOT EXISTS installment_duration_months INTEGER,
+        ADD COLUMN IF NOT EXISTS fine_percentage_on_default INTEGER DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS minimum_wallet_balance_required NUMERIC(15,2) DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS grace_period_days INTEGER DEFAULT 0
       `);
 
       await pool.query(`
@@ -237,6 +243,12 @@ export const updateProduct = async (id: string, data: any) => {
     "image_urls",
     "image_public_ids",
     "stock",
+    "installment_enabled",
+    "minimum_deposit_percentage",
+    "installment_duration_months",
+    "fine_percentage_on_default",
+    "minimum_wallet_balance_required",
+    "grace_period_days",
     "discount_enabled",
     "discount_percentage"
   ].some((key) => data[key] !== undefined);
@@ -273,12 +285,18 @@ export const updateProduct = async (id: string, data: any) => {
       image_urls=COALESCE($7, image_urls),
       image_public_ids=COALESCE($8, image_public_ids),
       stock=COALESCE($9, stock),
-      discount_enabled=$10,
-      discount_percentage=$11,
-      discount_amount=$12,
-      discounted_price=$13,
+      installment_enabled=COALESCE($10, installment_enabled),
+      minimum_deposit_percentage=COALESCE($11, minimum_deposit_percentage),
+      installment_duration_months=COALESCE($12, installment_duration_months),
+      fine_percentage_on_default=COALESCE($13, fine_percentage_on_default),
+      minimum_wallet_balance_required=COALESCE($14, minimum_wallet_balance_required),
+      grace_period_days=COALESCE($15, grace_period_days),
+      discount_enabled=$16,
+      discount_percentage=$17,
+      discount_amount=$18,
+      discounted_price=$19,
       updated_at=NOW()
-  WHERE id=$14
+  WHERE id=$20
   RETURNING ${productSelectColumns}
   `;
 
@@ -292,6 +310,12 @@ export const updateProduct = async (id: string, data: any) => {
     data.image_urls,
     data.image_public_ids,
     data.stock,
+    data.installment_enabled,
+    data.minimum_deposit_percentage,
+    data.installment_duration_months,
+    data.fine_percentage_on_default,
+    data.minimum_wallet_balance_required,
+    data.grace_period_days,
     discount.discount_enabled,
     discount.discount_percentage,
     discount.discount_amount,
@@ -323,7 +347,13 @@ export const getActiveProducts = async () => {
            END AS effective_price,
            ${productImageUrlSelect},
            ${productImageUrlsSelect},
-           stock
+           stock,
+           installment_enabled,
+           minimum_deposit_percentage,
+           installment_duration_months,
+           fine_percentage_on_default,
+           minimum_wallet_balance_required,
+           grace_period_days
     FROM products
     WHERE is_active = true
   `);
@@ -357,7 +387,13 @@ export const getActiveProductsByCategory = async (category: string) => {
            END AS effective_price,
            ${productImageUrlSelect},
            ${productImageUrlsSelect},
-           stock
+           stock,
+           installment_enabled,
+           minimum_deposit_percentage,
+           installment_duration_months,
+           fine_percentage_on_default,
+           minimum_wallet_balance_required,
+           grace_period_days
     FROM products
     WHERE is_active = true
       AND LOWER(category) = LOWER($1)
