@@ -36,6 +36,18 @@ type AdminProduct = {
   fine_percentage_on_default?: string | number | null;
   minimum_wallet_balance_required?: string | number | null;
   grace_period_days?: string | number | null;
+  has_variants: boolean;
+  default_variant_id?: string | null;
+  variants: ProductVariant[];
+};
+
+type ProductVariant = {
+  id: string;
+  name: string;
+  specs: Record<string, string | number | boolean>;
+  price: string | number;
+  stock: number;
+  effective_price: string | number;
 };
 ```
 
@@ -67,6 +79,7 @@ discount_enabled?: "true" | "false";
 discount_percentage?: string; // required when discount_enabled is "true"
 thumbnail_index?: string; // zero-based index in uploaded file order, defaults to 0
 images: File[]; // append up to 7 image files
+variants?: string; // JSON array; see PRODUCT_VARIANT_FRONTEND_INTEGRATION.md
 ```
 
 Example:
@@ -77,6 +90,7 @@ form.append("name", name);
 form.append("price", String(price));
 form.append("stock", String(stock));
 form.append("description", description); // keep textarea newlines as entered
+form.append("variants", JSON.stringify(variants));
 form.append("installment_enabled", String(installmentEnabled));
 if (installmentEnabled) {
   form.append("minimum_deposit_percentage", String(minimumDepositPercentage));

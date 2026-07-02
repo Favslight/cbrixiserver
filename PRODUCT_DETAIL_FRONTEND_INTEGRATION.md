@@ -34,17 +34,36 @@ type Product = {
   fine_percentage_on_default?: string | number | null;
   minimum_wallet_balance_required?: string | number | null;
   grace_period_days?: string | number | null;
+  has_variants: boolean;
+  default_variant_id?: string | null;
+  variant_price_min?: string | number;
+  variant_price_max?: string | number;
+  variants: ProductVariant[];
+};
+
+type ProductVariant = {
+  id: string;
+  name: string;
+  specs: Record<string, string | number | boolean>;
+  price: string | number;
+  discount_amount: string | number;
+  discounted_price: string | number;
+  effective_price: string | number;
+  stock: number;
 };
 ```
 
 ## Installment Display Rule
 
-Render installment values from the product:
+Render installment values from the selected variant when variants exist:
 
 ```ts
+const selectedVariant =
+  product.variants?.find((variant) => variant.id === selectedVariantId)
+  ?? product.variants?.[0];
 const depositPercent = Number(product.minimum_deposit_percentage);
 const months = Number(product.installment_duration_months);
-const price = Number(product.effective_price ?? product.discounted_price ?? product.price);
+const price = Number(selectedVariant?.effective_price ?? product.effective_price);
 
 const canShowInstallment =
   product.installment_enabled === true
@@ -63,6 +82,7 @@ UI rule:
 - If `canShowInstallment` is true, show something like `First payment: NGN 30,000 (30%)` and `Duration: 6 months`.
 - If it is false, hide installment terms or show `Installment unavailable`.
 - Never use a frontend default like `20%` or `12 months` when the backend returns a different value.
+- When `variants` exists, never calculate installment from the parent product price after a user selected a variant.
 
 ## Admin Upload Fields
 
@@ -79,6 +99,7 @@ form.append("price", String(price));
 form.append("stock", String(stock));
 form.append("category", category);
 form.append("description", description); // raw textarea value, newlines preserved
+form.append("variants", JSON.stringify(variants)); // see PRODUCT_VARIANT_FRONTEND_INTEGRATION.md
 
 form.append("installment_enabled", String(installmentEnabled));
 if (installmentEnabled) {

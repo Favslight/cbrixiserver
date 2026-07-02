@@ -68,6 +68,41 @@ const parseJsonArray = <T>(value: string | undefined): T[] | undefined => {
   }
 };
 
+const parseJsonArrayField = <T>(value: string | undefined, fieldName: string) => {
+  if (value === undefined || value === "") {
+    return { provided: false, value: undefined as T[] | undefined, error: undefined as string | undefined };
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) {
+      return { provided: true, value: undefined, error: `${fieldName} must be a JSON array` };
+    }
+    return { provided: true, value: parsed as T[], error: undefined };
+  } catch {
+    return { provided: true, value: undefined, error: `${fieldName} must be valid JSON` };
+  }
+};
+
+const derivePriceAndStockFromVariants = (
+  priceValue: string | undefined,
+  stockValue: string | undefined,
+  variants: any[] | undefined
+) => {
+  const activeVariants = (variants ?? []).filter((variant) => variant?.is_active !== false);
+  const variantPrices = activeVariants.map((variant) => Number(variant?.price));
+  const validPrices = variantPrices.filter((price) => Number.isFinite(price) && price >= 0);
+  const variantStocks = activeVariants.map((variant) => Number(variant?.stock ?? 0));
+  const validStocks = variantStocks.filter((stock) => Number.isInteger(stock) && stock >= 0);
+
+  return {
+    priceValue: priceValue ?? (validPrices.length ? String(Math.min(...validPrices)) : undefined),
+    stockValue: stockValue ?? (validStocks.length === activeVariants.length
+      ? String(validStocks.reduce((sum, stock) => sum + stock, 0))
+      : undefined)
+  };
+};
+
 const normalizeExistingImages = (
   imageManifest: ProductImageInput[] | undefined,
   imageUrls: string[] | undefined,
@@ -226,19 +261,29 @@ export const createProductController = async (
   const gracePeriodValue = readFieldValue(fields, "grace_period_days");
   const discountEnabledValue = readFieldValue(fields, "discount_enabled") ?? readFieldValue(fields, "discountEnabled");
   const discountPercentageValue = readFieldValue(fields, "discount_percentage") ?? readFieldValue(fields, "discountPercentage");
+  const variantsFieldValue = readFieldValue(fields, "variants") ?? readFieldValue(fields, "product_variants");
+  const parsedVariants = parseJsonArrayField<any>(variantsFieldValue, "variants");
   const thumbnailIndex = parseOptionalInteger(
     readFieldValue(fields, "thumbnail_index") ?? readFieldValue(fields, "thumbnailIndex")
   );
   const thumbnailUrl = readFieldValue(fields, "thumbnail_url") ?? readFieldValue(fields, "thumbnailUrl");
 
-  if (!name || !priceValue || !stockValue) {
+  if (parsedVariants.error) {
+    return reply.status(400).send({ message: parsedVariants.error });
+  }
+
+  const derived = derivePriceAndStockFromVariants(priceValue, stockValue, parsedVariants.value);
+  const effectivePriceValue = derived.priceValue;
+  const effectiveStockValue = derived.stockValue;
+
+  if (!name || !effectivePriceValue || !effectiveStockValue) {
     return reply.status(400).send({
-      message: "name, price and stock are required"
+      message: "name, price and stock are required unless variants include price and stock"
     });
   }
 
-  const price = Number(priceValue);
-  const stock = Number(stockValue);
+  const price = Number(effectivePriceValue);
+  const stock = Number(effectiveStockValue);
   if (Number.isNaN(price) || Number.isNaN(stock)) {
     return reply.status(400).send({
       message: "price and stock must be valid numbers"
@@ -284,6 +329,7 @@ export const createProductController = async (
     price,
     ...imagePayload,
     stock,
+    variants: parsedVariants.value,
     installment_enabled: installmentEnabledValue === "true",
     minimum_deposit_percentage: parseOptionalNumber(minDepositValue),
     installment_duration_months: parseOptionalNumber(durationValue),
@@ -294,7 +340,23 @@ export const createProductController = async (
     discount_percentage: discountPercentage
   };
 
-  const product = await createProduct(productData);
+  let product;
+  try {
+    product = await createProduct(productData);
+  } catch (error: any) {
+    if (
+      error?.message === "variant price must be a valid non-negative number"
+      || error?.message === "variant stock must be a valid non-negative integer"
+      || error?.message === "At least one active product variant is required"
+      || error?.message === "price must be a valid non-negative number"
+      || error?.message === "discount_percentage must be greater than 0 and less than or equal to 100 when discount is active"
+    ) {
+      return reply.status(400).send({ message: error.message });
+    }
+
+    req.log.error(error);
+    return reply.status(500).send({ message: "Failed to create product" });
+  }
 
   return reply.send({
     success: true,
@@ -352,6 +414,9 @@ export const updateProductController = async (
     let gracePeriodValue: string | undefined;
     let discountEnabledValue: string | undefined;
     let discountPercentageValue: string | undefined;
+    let variantsValue: string | undefined;
+    let variants: any[] | undefined;
+    let variantsProvided = false;
     let imagesManifest: ProductImageInput[] | undefined;
     let existingImageUrls: string[] | undefined;
     let existingImagePublicIds: string[] | undefined;
@@ -397,6 +462,13 @@ export const updateProductController = async (
       gracePeriodValue = readFieldValue(fields, "grace_period_days") ?? readFieldValue(fields, "gracePeriodDays");
       discountEnabledValue = readFieldValue(fields, "discount_enabled") ?? readFieldValue(fields, "discountEnabled");
       discountPercentageValue = readFieldValue(fields, "discount_percentage") ?? readFieldValue(fields, "discountPercentage");
+      variantsValue = readFieldValue(fields, "variants") ?? readFieldValue(fields, "product_variants");
+      const parsedVariants = parseJsonArrayField<any>(variantsValue, "variants");
+      if (parsedVariants.error) {
+        return reply.status(400).send({ message: parsedVariants.error });
+      }
+      variantsProvided = parsedVariants.provided;
+      variants = parsedVariants.value;
       imagesManifest = parseJsonArray<ProductImageInput>(
         readFieldValue(fields, "images_manifest") ?? readFieldValue(fields, "imagesManifest")
       );
@@ -457,6 +529,15 @@ export const updateProductController = async (
         : body.discountPercentage !== undefined
           ? String(body.discountPercentage)
           : undefined;
+      if (Array.isArray(body.variants)) {
+        variantsProvided = true;
+        variants = body.variants as any[];
+      } else if (Array.isArray(body.product_variants)) {
+        variantsProvided = true;
+        variants = body.product_variants as any[];
+      } else if (body.variants !== undefined || body.product_variants !== undefined) {
+        return reply.status(400).send({ message: "variants must be an array" });
+      }
       imagesManifest = Array.isArray(body.images_manifest)
         ? body.images_manifest as ProductImageInput[]
         : Array.isArray(body.imagesManifest)
@@ -547,6 +628,7 @@ export const updateProductController = async (
       category,
       price: parsedPrice,
       stock: parsedStock,
+      variants: variantsProvided ? variants : undefined,
       installment_enabled: parsedInstallmentEnabled,
       minimum_deposit_percentage: parsedMinDeposit,
       installment_duration_months: parsedDuration,
@@ -608,6 +690,9 @@ export const updateProductController = async (
     if (
       error?.message === "price must be a valid non-negative number"
       || error?.message === "discount_percentage must be greater than 0 and less than or equal to 100 when discount is active"
+      || error?.message === "variant price must be a valid non-negative number"
+      || error?.message === "variant stock must be a valid non-negative integer"
+      || error?.message === "At least one active product variant is required"
     ) {
       return reply.status(400).send({ message: error.message });
     }

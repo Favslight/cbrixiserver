@@ -45,6 +45,21 @@ CREATE TABLE products (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS product_variants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    specs JSONB DEFAULT '{}'::JSONB,
+    sku VARCHAR(120),
+    price NUMERIC(15,2) NOT NULL,
+    stock INTEGER DEFAULT 0,
+    is_default BOOLEAN DEFAULT FALSE,
+    is_active BOOLEAN DEFAULT TRUE,
+    sort_order INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
 CREATE TABLE carts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -56,6 +71,7 @@ CREATE TABLE cart_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     cart_id UUID REFERENCES carts(id) ON DELETE CASCADE,
     product_id UUID REFERENCES products(id),
+    variant_id UUID REFERENCES product_variants(id),
     quantity INTEGER NOT NULL CHECK (quantity > 0),
     created_at TIMESTAMP DEFAULT NOW()
 );
@@ -80,8 +96,12 @@ CREATE TABLE order_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     order_id UUID REFERENCES orders(id) ON DELETE CASCADE,
     product_id UUID REFERENCES products(id),
+    variant_id UUID REFERENCES product_variants(id),
     quantity INTEGER NOT NULL,
     price_at_purchase NUMERIC(15,2) NOT NULL,
+    product_name_snapshot VARCHAR(255),
+    variant_name_snapshot VARCHAR(255),
+    variant_specs_snapshot JSONB DEFAULT '{}'::JSONB,
     created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -224,6 +244,10 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE INDEX idx_orders_user_id ON orders(user_id);
 CREATE INDEX idx_orders_status ON orders(status);
 CREATE INDEX idx_orders_external_email ON orders(external_email);
+CREATE INDEX IF NOT EXISTS idx_product_variants_product_id ON product_variants(product_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_product_variants_one_default
+ON product_variants(product_id)
+WHERE is_default = TRUE;
 CREATE INDEX idx_users_cbrilliance_email ON users(LOWER(cbrilliance_email)) WHERE cbrilliance_email IS NOT NULL;
 CREATE INDEX idx_users_reset_token ON users(reset_token);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_referral_code_unique ON users(referral_code) WHERE referral_code IS NOT NULL;
@@ -292,7 +316,13 @@ ADD COLUMN IF NOT EXISTS image_public_ids TEXT[] DEFAULT ARRAY[]::TEXT[],
 ADD COLUMN IF NOT EXISTS discount_enabled BOOLEAN DEFAULT FALSE,
 ADD COLUMN IF NOT EXISTS discount_percentage NUMERIC(5,2) DEFAULT 0,
 ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(15,2) DEFAULT 0,
-ADD COLUMN IF NOT EXISTS discounted_price NUMERIC(15,2);
+ADD COLUMN IF NOT EXISTS discounted_price NUMERIC(15,2),
+ADD COLUMN IF NOT EXISTS installment_enabled BOOLEAN DEFAULT FALSE,
+ADD COLUMN IF NOT EXISTS minimum_deposit_percentage INTEGER DEFAULT 50,
+ADD COLUMN IF NOT EXISTS installment_duration_months INTEGER,
+ADD COLUMN IF NOT EXISTS fine_percentage_on_default INTEGER DEFAULT 0,
+ADD COLUMN IF NOT EXISTS minimum_wallet_balance_required NUMERIC(15,2) DEFAULT 0,
+ADD COLUMN IF NOT EXISTS grace_period_days INTEGER DEFAULT 0;
 
 UPDATE products
 SET
@@ -313,6 +343,70 @@ WHERE discounted_price IS NULL
    OR discount_amount IS NULL
    OR discount_percentage IS NULL
    OR discount_enabled IS NULL;
+
+CREATE TABLE IF NOT EXISTS product_variants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    specs JSONB DEFAULT '{}'::JSONB,
+    sku VARCHAR(120),
+    price NUMERIC(15,2) NOT NULL,
+    stock INTEGER DEFAULT 0,
+    is_default BOOLEAN DEFAULT FALSE,
+    is_active BOOLEAN DEFAULT TRUE,
+    sort_order INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+ALTER TABLE product_variants
+ADD COLUMN IF NOT EXISTS specs JSONB DEFAULT '{}'::JSONB,
+ADD COLUMN IF NOT EXISTS sku VARCHAR(120),
+ADD COLUMN IF NOT EXISTS is_default BOOLEAN DEFAULT FALSE,
+ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE,
+ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0,
+ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW(),
+ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
+
+INSERT INTO product_variants (product_id, name, specs, price, stock, is_default, sort_order)
+SELECT p.id, 'Default', '{}'::JSONB, p.price, COALESCE(p.stock, 0), TRUE, 0
+FROM products p
+WHERE NOT EXISTS (
+    SELECT 1 FROM product_variants pv WHERE pv.product_id = p.id
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_variants_product_id
+ON product_variants(product_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_product_variants_one_default
+ON product_variants(product_id)
+WHERE is_default = TRUE;
+
+ALTER TABLE cart_items
+ADD COLUMN IF NOT EXISTS variant_id UUID REFERENCES product_variants(id);
+
+UPDATE cart_items ci
+SET variant_id = pv.id
+FROM product_variants pv
+WHERE ci.product_id = pv.product_id
+  AND pv.is_default = TRUE
+  AND ci.variant_id IS NULL;
+
+ALTER TABLE order_items
+ADD COLUMN IF NOT EXISTS variant_id UUID REFERENCES product_variants(id),
+ADD COLUMN IF NOT EXISTS product_name_snapshot VARCHAR(255),
+ADD COLUMN IF NOT EXISTS variant_name_snapshot VARCHAR(255),
+ADD COLUMN IF NOT EXISTS variant_specs_snapshot JSONB DEFAULT '{}'::JSONB;
+
+UPDATE order_items oi
+SET
+    variant_id = COALESCE(oi.variant_id, pv.id),
+    product_name_snapshot = COALESCE(oi.product_name_snapshot, p.name),
+    variant_name_snapshot = COALESCE(oi.variant_name_snapshot, pv.name),
+    variant_specs_snapshot = COALESCE(oi.variant_specs_snapshot, pv.specs, '{}'::JSONB)
+FROM products p
+LEFT JOIN product_variants pv ON pv.product_id = p.id AND pv.is_default = TRUE
+WHERE oi.product_id = p.id;
 
 ALTER TABLE orders
 ADD COLUMN IF NOT EXISTS external_email VARCHAR(150);

@@ -79,19 +79,23 @@ export const getAllUsersDetailsController = async (
         const itemsRes = await pool.query(
           `SELECT
              order_items.*,
-             products.name,
-             products.price,
+             COALESCE(order_items.product_name_snapshot, products.name) AS name,
+             COALESCE(order_items.variant_name_snapshot, pv.name) AS variant_name,
+             COALESCE(order_items.variant_specs_snapshot, pv.specs, '{}'::JSONB) AS variant_specs,
+             pv.sku AS variant_sku,
+             COALESCE(order_items.price_at_purchase, pv.price, products.price) AS price,
              COALESCE(products.discount_enabled, FALSE) AS discount_enabled,
              COALESCE(products.discount_percentage, 0) AS discount_percentage,
-             COALESCE(products.discount_amount, 0) AS discount_amount,
-             COALESCE(products.discounted_price, products.price) AS discounted_price,
              CASE
-               WHEN COALESCE(products.discount_enabled, FALSE) THEN COALESCE(products.discounted_price, products.price)
-               ELSE products.price
-             END AS effective_price,
+               WHEN COALESCE(products.discount_enabled, FALSE) THEN ROUND((COALESCE(order_items.price_at_purchase, pv.price, products.price) * COALESCE(products.discount_percentage, 0)) / 100, 2)
+               ELSE 0
+             END AS discount_amount,
+             order_items.price_at_purchase AS discounted_price,
+             order_items.price_at_purchase AS effective_price,
              products.installment_duration_months
            FROM order_items
            JOIN products ON products.id = order_items.product_id
+           LEFT JOIN product_variants pv ON pv.id = order_items.variant_id
            WHERE order_items.order_id=$1`,
           [order.id]
         );

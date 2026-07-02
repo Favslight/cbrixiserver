@@ -8,9 +8,9 @@ export const addToCartController = async (
 ) => {
 
   const user: any = req.user;
-  const { product_id, quantity } = req.body as any;
+  const { product_id, variant_id, variantId, quantity } = req.body as any;
 
-  const item = await addToCart(user.id, product_id, quantity || 1);
+  const item = await addToCart(user.id, product_id, quantity || 1, variant_id ?? variantId);
 
   return reply.send({
     success: true,

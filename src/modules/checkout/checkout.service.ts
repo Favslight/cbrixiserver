@@ -94,9 +94,27 @@ export const createOrderFromCart = async (
   // Create order items
   for (const item of cartItems) {
     await pool.query(`
-      INSERT INTO order_items (order_id, product_id, quantity, price_at_purchase)
-      VALUES ($1,$2,$3,$4)
-    `, [order.id, item.product_id, item.quantity, item.effective_price ?? item.price]);
+      INSERT INTO order_items (
+        order_id,
+        product_id,
+        variant_id,
+        quantity,
+        price_at_purchase,
+        product_name_snapshot,
+        variant_name_snapshot,
+        variant_specs_snapshot
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8::JSONB)
+    `, [
+      order.id,
+      item.product_id,
+      item.variant_id,
+      item.quantity,
+      item.effective_price ?? item.price,
+      item.name,
+      item.variant_name,
+      JSON.stringify(item.variant_specs ?? {})
+    ]);
   }
 
   if (paymentMode === "INSTALLMENT" && installmentBalance > 0) {
@@ -164,23 +182,27 @@ export const getUserOrders = async (userId: string) => {
       `
       SELECT
         order_items.*,
-        products.name,
+        COALESCE(order_items.product_name_snapshot, products.name) AS name,
+        COALESCE(order_items.variant_name_snapshot, pv.name) AS variant_name,
+        COALESCE(order_items.variant_specs_snapshot, pv.specs, '{}'::JSONB) AS variant_specs,
+        pv.sku AS variant_sku,
         products.description,
-        products.price,
+        COALESCE(order_items.price_at_purchase, pv.price, products.price) AS price,
         COALESCE(products.discount_enabled, FALSE) AS discount_enabled,
         COALESCE(products.discount_percentage, 0) AS discount_percentage,
-        COALESCE(products.discount_amount, 0) AS discount_amount,
-        COALESCE(products.discounted_price, products.price) AS discounted_price,
         CASE
-          WHEN COALESCE(products.discount_enabled, FALSE) THEN COALESCE(products.discounted_price, products.price)
-          ELSE products.price
-        END AS effective_price,
+          WHEN COALESCE(products.discount_enabled, FALSE) THEN ROUND((COALESCE(order_items.price_at_purchase, pv.price, products.price) * COALESCE(products.discount_percentage, 0)) / 100, 2)
+          ELSE 0
+        END AS discount_amount,
+        order_items.price_at_purchase AS discounted_price,
+        order_items.price_at_purchase AS effective_price,
         products.image_url,
         products.image_urls,
         products.installment_duration_months,
         products.minimum_deposit_percentage
       FROM order_items
       JOIN products ON products.id = order_items.product_id
+      LEFT JOIN product_variants pv ON pv.id = order_items.variant_id
       WHERE order_items.order_id = $1
       ORDER BY order_items.created_at ASC
       `,
