@@ -332,10 +332,10 @@ export const getMyReferralDashboard = async (userId: string) => {
   const totalsRes = await pool.query(
     `
     SELECT
-      COALESCE(SUM(reward_amount), 0) FILTER (WHERE status IN ('AVAILABLE', 'REQUESTED', 'PAID')) AS total_earned,
-      COALESCE(SUM(reward_amount), 0) FILTER (WHERE status = 'AVAILABLE') AS available_balance,
-      COALESCE(SUM(reward_amount), 0) FILTER (WHERE status = 'REQUESTED') AS pending_payout_balance,
-      COALESCE(SUM(reward_amount), 0) FILTER (WHERE status = 'PAID') AS paid_out_balance
+      COALESCE(SUM(reward_amount) FILTER (WHERE status IN ('AVAILABLE', 'REQUESTED', 'PAID')), 0) AS total_earned,
+      COALESCE(SUM(reward_amount) FILTER (WHERE status = 'AVAILABLE'), 0) AS available_balance,
+      COALESCE(SUM(reward_amount) FILTER (WHERE status = 'REQUESTED'), 0) AS pending_payout_balance,
+      COALESCE(SUM(reward_amount) FILTER (WHERE status = 'PAID'), 0) AS paid_out_balance
     FROM referral_rewards
     WHERE referrer_id = $1
     `,
