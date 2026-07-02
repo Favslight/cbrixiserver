@@ -6,6 +6,11 @@ import { sendEmail } from "../email/email.service";
 import { resetPasswordTemplate } from "../email/email.templates";
 import { EmailType } from "../email/email.types";
 import { ensureCbrillianceVerificationColumns } from "../users/cbrillianceVerification.service";
+import {
+  createUniqueReferralCode,
+  ensureReferralSchema,
+  findReferrerByCode
+} from "../referrals/referral.service";
 //import { createNotification } from "../notifications/notification.service";
 //import { creditWallet, debitWallet, getAdminWallet } from "../wallets/wallet.engine";
 //import { getUserWallet } from "../wallets/wallet.service";
@@ -33,13 +38,18 @@ export const signupUser = async (payload: {
   email: string;
   password: string;
   username: string;
+  referral_code?: string;
+  referralCode?: string;
+  ref?: string;
 }) => {
   const { firstname, lastname, username, email, password } = payload;
+  const submittedReferralCode = payload.referral_code ?? payload.referralCode ?? payload.ref;
   const passwordHash = await hashPassword(password);
   const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
+    await ensureReferralSchema();
 
     // 1️⃣ Check if email or username already exists
     const emailCheck = await client.query(
@@ -51,15 +61,45 @@ export const signupUser = async (payload: {
       throw new Error("Email already exists");
     }
 
+    const usernameCheck = await client.query(
+      `SELECT id FROM users WHERE username = $1`,
+      [username]
+    );
+
+    if (usernameCheck.rowCount) {
+      throw new Error("Username already exists");
+    }
+
+    const referrer = await findReferrerByCode(client, submittedReferralCode);
+
+    if (submittedReferralCode && !referrer) {
+      throw new Error("Invalid referral code");
+    }
+
+    const referralCode = await createUniqueReferralCode(client, firstname, lastname);
+
     const userResult = await client.query(
-      `INSERT INTO users (firstname, lastname, username, email, password_hash)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, firstname, lastname, username, email`,
-      [firstname, lastname, username, email, passwordHash]
+      `INSERT INTO users
+         (firstname, lastname, username, email, password_hash, referral_code, referred_by_user_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, firstname, lastname, username, email, referral_code, referred_by_user_id`,
+      [firstname, lastname, username, email, passwordHash, referralCode, referrer?.id ?? null]
     );
     
 
     const user = userResult.rows[0];
+
+    if (referrer) {
+      await client.query(
+        `
+        UPDATE users
+        SET referral_count = COALESCE(referral_count, 0) + 1,
+            updated_at = NOW()
+        WHERE id = $1
+        `,
+        [referrer.id]
+      );
+    }
 
     await client.query("COMMIT");
 
@@ -151,6 +191,9 @@ export const getUserById = async (userId: string) => {
           cbrilliance_email,
           cbrilliance_email_verified,
           cbrilliance_email_verified_at,
+          referral_code,
+          referred_by_user_id,
+          referral_count,
           created_at
         FROM users
         WHERE id = $1`,

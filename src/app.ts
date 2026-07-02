@@ -12,6 +12,8 @@ import { adminPaymentRoutes } from "./modules/admin/admin.payment.routes";
 import { startInstallmentReminderJob } from "./modules/email/email.scheduler";
 import { authRoutes } from "./modules/auth/auth.route";
 import { partnerRoutes } from "./modules/partner/partner.routes";
+import { referralRoutes } from "./modules/referrals/referral.routes";
+import { notificationRoutes } from "./modules/notifications/notification.routes";
 
 startInstallmentReminderJob();
 
@@ -140,3 +142,5 @@ app.register(authRoutes, { prefix: "/user" });
 app.register(paymentRoutes);
 app.register(adminPaymentRoutes);
 app.register(partnerRoutes, { prefix: "/api/partner" });
+app.register(referralRoutes);
+app.register(notificationRoutes);

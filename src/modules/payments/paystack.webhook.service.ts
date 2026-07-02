@@ -2,6 +2,7 @@
 import crypto from "crypto";
 import { pool } from "../../config/db";
 import { applyPayment, sendPaymentSuccessNotification } from "./payment.service";
+import { recordReferralRewardForTransaction } from "../referrals/referral.service";
 
 export const handlePaystackWebhook = async (
   signature: string,
@@ -44,5 +45,6 @@ export const handlePaystackWebhook = async (
 
     await applyPayment(txn);
     await sendPaymentSuccessNotification(txn);
+    await recordReferralRewardForTransaction(txn.id);
   }
 };

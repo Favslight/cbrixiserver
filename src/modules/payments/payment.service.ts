@@ -5,6 +5,7 @@ import { invoiceTemplate, paymentSuccessTemplate } from "../email/email.template
 import { EmailType } from "../email/email.types";
 import { generateInvoiceNumber } from "./invoice.service";
 import { initializePaystackPayment, verifyPaystackPayment } from "./paystack.service";
+import { recordReferralRewardForTransaction } from "../referrals/referral.service";
 
 export const initiatePaystackPayment = async (
   user: any,
@@ -86,6 +87,7 @@ export const verifyPaystack = async (reference: string) => {
 
   await applyPayment(txn);
   await sendPaymentSuccessNotification(txn);
+  await recordReferralRewardForTransaction(txn.id);
 
   return true;
 };

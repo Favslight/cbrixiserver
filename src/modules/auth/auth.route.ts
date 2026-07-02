@@ -12,8 +12,12 @@ import {
 export const authRoutes = async (app: FastifyInstance) => {
 
   app.post("/signup", async (request, reply) => {
-    const user = await signupUser(request.body as any);
-    reply.code(201).send(user);
+    try {
+      const user = await signupUser(request.body as any);
+      reply.code(201).send(user);
+    } catch (error: any) {
+      reply.code(400).send({ message: error.message });
+    }
   });
 
 

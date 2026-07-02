@@ -104,3 +104,74 @@ ${resetLink}
 
 This link expires in 15 minutes. If you did not request this, you can ignore this email.
 `;
+
+export const referralBonusEarnedTemplate = (
+  firstname: string,
+  referredName: string,
+  rewardAmount: number,
+  purchaseAmount: number,
+  percentage: number
+) => `
+Hello ${firstname},
+
+You earned a referral bonus.
+
+Referred Customer: ${referredName}
+Confirmed Purchase Amount: ${money(purchaseAmount)}
+Referral Percentage: ${percentage}%
+Bonus Earned: ${money(rewardAmount)}
+
+You can view your referral balance from your dashboard.
+`;
+
+export const referralPayoutRequestedTemplate = (
+  firstname: string,
+  amount: number,
+  bankName: string,
+  accountName: string,
+  accountNumber: string
+) => `
+Hello ${firstname},
+
+Your referral payout request has been received.
+
+Amount Requested: ${money(amount)}
+Bank Name: ${bankName}
+Account Name: ${accountName}
+Account Number: ${accountNumber}
+
+We will notify you after admin sends the payout and approves the request.
+`;
+
+export const referralPayoutRequestedAdminTemplate = (
+  userName: string,
+  userEmail: string,
+  amount: number,
+  bankName: string,
+  accountName: string,
+  accountNumber: string
+) => `
+Hello Admin,
+
+A referral payout request is pending.
+
+User: ${userName}
+Email: ${userEmail}
+Amount: ${money(amount)}
+Bank Name: ${bankName}
+Account Name: ${accountName}
+Account Number: ${accountNumber}
+
+Please send the payout, then approve the request from the admin dashboard.
+`;
+
+export const referralPayoutApprovedTemplate = (
+  firstname: string,
+  amount: number
+) => `
+Hello ${firstname},
+
+Your referral payout of ${money(amount)} has been approved.
+
+Thank you.
+`;

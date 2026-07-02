@@ -25,7 +25,7 @@ const getEmailFrom = () => {
 const resend = new Resend(getResendApiKey());
 
 export const sendEmail = async (
-  userId: string,
+  userId: string | null,
   orderId: string | null,
   installmentId: string | null,
   email: string,

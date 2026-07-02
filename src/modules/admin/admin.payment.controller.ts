@@ -4,6 +4,7 @@ import { applyPayment, sendPaymentSuccessNotification } from "../payments/paymen
 import { sendEmail } from "../email/email.service";
 import { orderApprovedTemplate, orderRejectedTemplate } from "../email/email.templates";
 import { EmailType } from "../email/email.types";
+import { recordReferralRewardForTransaction } from "../referrals/referral.service";
 import {
   ensureCbrillianceVerificationColumns,
   markUserCbrillianceEmailVerified,
@@ -276,6 +277,7 @@ export const approvePayment = async (
 
   await applyPayment(txn);
   await sendPaymentSuccessNotification(txn);
+  await recordReferralRewardForTransaction(txn.id);
 
   return reply.send({ success:true });
 };

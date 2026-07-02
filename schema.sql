@@ -11,6 +11,9 @@ CREATE TABLE users (
     cbrilliance_email VARCHAR(150),
     cbrilliance_email_verified BOOLEAN DEFAULT FALSE,
     cbrilliance_email_verified_at TIMESTAMP,
+    referral_code VARCHAR(32),
+    referred_by_user_id UUID REFERENCES users(id),
+    referral_count INTEGER DEFAULT 0,
     status VARCHAR(20) DEFAULT 'ACTIVE', -- ACTIVE / BLOCKED
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
@@ -164,14 +167,80 @@ CREATE TABLE IF NOT EXISTS partner_sales_record_items (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS referral_settings (
+    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    is_enabled BOOLEAN DEFAULT FALSE,
+    bonus_percentage NUMERIC(5,2) DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS referral_rewards (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    referrer_id UUID NOT NULL REFERENCES users(id),
+    referred_user_id UUID NOT NULL REFERENCES users(id),
+    order_id UUID NOT NULL REFERENCES orders(id),
+    payment_transaction_id UUID NOT NULL UNIQUE REFERENCES payment_transactions(id),
+    purchase_amount NUMERIC(15,2) NOT NULL,
+    bonus_percentage NUMERIC(5,2) NOT NULL,
+    reward_amount NUMERIC(15,2) NOT NULL,
+    status VARCHAR(20) DEFAULT 'AVAILABLE',
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS referral_payout_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id),
+    amount NUMERIC(15,2) NOT NULL,
+    account_name VARCHAR(255) NOT NULL,
+    account_number VARCHAR(50) NOT NULL,
+    bank_name VARCHAR(255) NOT NULL,
+    status VARCHAR(20) DEFAULT 'PENDING',
+    admin_id UUID,
+    approved_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+ALTER TABLE referral_rewards
+ADD COLUMN IF NOT EXISTS payout_request_id UUID REFERENCES referral_payout_requests(id),
+ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    target_type VARCHAR(20) NOT NULL DEFAULT 'USER',
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    title VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    type VARCHAR(80) NOT NULL,
+    metadata JSONB DEFAULT '{}'::JSONB,
+    is_read BOOLEAN DEFAULT FALSE,
+    read_at TIMESTAMP,
+    deleted_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
 CREATE INDEX idx_orders_user_id ON orders(user_id);
 CREATE INDEX idx_orders_status ON orders(status);
 CREATE INDEX idx_orders_external_email ON orders(external_email);
 CREATE INDEX idx_users_cbrilliance_email ON users(LOWER(cbrilliance_email)) WHERE cbrilliance_email IS NOT NULL;
 CREATE INDEX idx_users_reset_token ON users(reset_token);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_referral_code_unique ON users(referral_code) WHERE referral_code IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_referred_by_user_id ON users(referred_by_user_id);
 CREATE INDEX idx_installments_due_date ON installments(due_date);
 CREATE INDEX idx_installments_status ON installments(status);
 CREATE INDEX idx_default_events_processed ON default_events(processed);
+CREATE INDEX IF NOT EXISTS idx_referral_rewards_referrer_id ON referral_rewards(referrer_id);
+CREATE INDEX IF NOT EXISTS idx_referral_rewards_referred_user_id ON referral_rewards(referred_user_id);
+CREATE INDEX IF NOT EXISTS idx_referral_rewards_status ON referral_rewards(status);
+CREATE INDEX IF NOT EXISTS idx_referral_payout_requests_user_id ON referral_payout_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_referral_payout_requests_status ON referral_payout_requests(status);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_target_type ON notifications(target_type);
+CREATE INDEX IF NOT EXISTS idx_notifications_unread
+ON notifications(target_type, user_id, is_read)
+WHERE deleted_at IS NULL;
 
 ALTER TABLE users
 ALTER COLUMN external_user_id DROP NOT NULL,
@@ -182,6 +251,9 @@ ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMP,
 ADD COLUMN IF NOT EXISTS cbrilliance_email VARCHAR(150),
 ADD COLUMN IF NOT EXISTS cbrilliance_email_verified BOOLEAN DEFAULT FALSE,
 ADD COLUMN IF NOT EXISTS cbrilliance_email_verified_at TIMESTAMP,
+ADD COLUMN IF NOT EXISTS referral_code VARCHAR(32),
+ADD COLUMN IF NOT EXISTS referred_by_user_id UUID REFERENCES users(id),
+ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0,
 ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW(),
 ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
 
@@ -195,6 +267,21 @@ ON users(reset_token);
 CREATE INDEX IF NOT EXISTS idx_users_cbrilliance_email
 ON users(LOWER(cbrilliance_email))
 WHERE cbrilliance_email IS NOT NULL;
+
+UPDATE users
+SET referral_code = UPPER(SUBSTRING(REPLACE(id::TEXT, '-', '') FROM 1 FOR 10))
+WHERE referral_code IS NULL OR referral_code = '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_referral_code_unique
+ON users(referral_code)
+WHERE referral_code IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_users_referred_by_user_id
+ON users(referred_by_user_id);
+
+INSERT INTO referral_settings (id, is_enabled, bonus_percentage)
+VALUES (1, FALSE, 0)
+ON CONFLICT (id) DO NOTHING;
 
 ALTER TABLE products
 ADD COLUMN IF NOT EXISTS category VARCHAR(255),
