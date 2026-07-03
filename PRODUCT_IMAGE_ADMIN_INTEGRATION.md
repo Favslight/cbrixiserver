@@ -29,13 +29,9 @@ type AdminProduct = {
   image_public_id?: string | null;
   image_urls: string[];
   image_public_ids: string[];
-  stock: number;
   installment_enabled: boolean;
   minimum_deposit_percentage?: string | number | null;
   installment_duration_months?: string | number | null;
-  fine_percentage_on_default?: string | number | null;
-  minimum_wallet_balance_required?: string | number | null;
-  grace_period_days?: string | number | null;
   has_variants: boolean;
   default_variant_id?: string | null;
   variants: ProductVariant[];
@@ -46,7 +42,6 @@ type ProductVariant = {
   name: string;
   specs: Record<string, string | number | boolean>;
   price: string | number;
-  stock: number;
   effective_price: string | number;
 };
 ```
@@ -66,15 +61,11 @@ Fields:
 ```ts
 name: string;
 price: string;
-stock: string;
 description?: string;
 category?: string;
 installment_enabled?: "true" | "false";
 minimum_deposit_percentage?: string; // example "30"; do not hardcode on frontend
 installment_duration_months?: string; // example "6"; do not hardcode on frontend
-fine_percentage_on_default?: string;
-minimum_wallet_balance_required?: string;
-grace_period_days?: string;
 discount_enabled?: "true" | "false";
 discount_percentage?: string; // required when discount_enabled is "true"
 thumbnail_index?: string; // zero-based index in uploaded file order, defaults to 0
@@ -88,16 +79,12 @@ Example:
 const form = new FormData();
 form.append("name", name);
 form.append("price", String(price));
-form.append("stock", String(stock));
 form.append("description", description); // keep textarea newlines as entered
 form.append("variants", JSON.stringify(variants));
 form.append("installment_enabled", String(installmentEnabled));
 if (installmentEnabled) {
   form.append("minimum_deposit_percentage", String(minimumDepositPercentage));
   form.append("installment_duration_months", String(installmentDurationMonths));
-  form.append("fine_percentage_on_default", String(finePercentageOnDefault ?? 0));
-  form.append("minimum_wallet_balance_required", String(minimumWalletBalanceRequired ?? 0));
-  form.append("grace_period_days", String(gracePeriodDays ?? 0));
 }
 form.append("discount_enabled", String(discountEnabled));
 if (discountEnabled) {

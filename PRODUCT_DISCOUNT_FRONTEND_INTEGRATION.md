@@ -96,7 +96,6 @@ Example:
 const form = new FormData();
 form.append("name", name);
 form.append("price", String(price));
-form.append("stock", String(stock));
 form.append("discount_enabled", String(discountEnabled));
 
 if (discountEnabled) {

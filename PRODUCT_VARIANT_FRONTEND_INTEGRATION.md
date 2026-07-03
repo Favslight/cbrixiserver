@@ -7,7 +7,7 @@ The backend now supports one product with many `variants`. The frontend should n
 ## Backend Rule
 
 - `products` stores the shared product data: name, description, category, images, installment settings, and discount settings.
-- `product_variants` stores selectable specs: variant name/specs, price, stock, SKU, active state, and display order.
+- `product_variants` stores selectable specs: variant name/specs, price, SKU, active state, and display order.
 - Discount is product-level, but the backend calculates discount fields per variant using each variant price.
 - Installment is product-level, but first deposit/monthly schedule must be calculated from the selected variant `effective_price`.
 
@@ -30,7 +30,6 @@ type ProductVariant = {
   discount_amount: string | number; // calculated from this variant price
   discounted_price: string | number; // calculated from this variant price
   effective_price: string | number; // price frontend should display/buy with
-  stock: number;
   is_default: boolean;
   is_active: boolean;
   sort_order: number;
@@ -65,14 +64,12 @@ const variants = [
     name: "4GB RAM / 128GB ROM",
     specs: { ram: "4GB", rom: "128GB" },
     price: 120000,
-    stock: 10,
     sku: "REDMI-4-128"
   },
   {
     name: "6GB RAM / 128GB ROM",
     specs: { ram: "6GB", rom: "128GB" },
     price: 145000,
-    stock: 7,
     sku: "REDMI-6-128"
   }
 ];
@@ -98,7 +95,7 @@ form.append("thumbnail_index", String(thumbnailIndex));
 orderedFiles.forEach((file) => form.append("images", file));
 ```
 
-If `price` and `stock` are omitted, the backend derives product-level display values from the active variants.
+If `price` is omitted, the backend derives the product-level display price from the active variants.
 
 ## Admin Edit Variants
 
@@ -114,14 +111,12 @@ For edits, send the full active variant list the admin wants to keep:
       "name": "4GB RAM / 128GB ROM",
       "specs": { "ram": "4GB", "rom": "128GB" },
       "price": 120000,
-      "stock": 10,
       "sku": "REDMI-4-128"
     },
     {
       "name": "8GB RAM / 256GB ROM",
       "specs": { "ram": "8GB", "rom": "256GB" },
       "price": 180000,
-      "stock": 4,
       "sku": "REDMI-8-256"
     }
   ]
@@ -152,14 +147,12 @@ const selectedVariant =
   ?? product.variants[0];
 
 const displayPrice = selectedVariant?.effective_price ?? product.effective_price;
-const displayStock = selectedVariant?.stock ?? product.stock;
 ```
 
 When the variant changes:
 
 - update displayed price from `selectedVariant.effective_price`;
 - update original/discount price from selected variant discount fields;
-- update stock availability from `selectedVariant.stock`;
 - update installment first payment from selected variant price.
 
 ## Add To Cart
@@ -194,7 +187,6 @@ type CartItem = {
   price: string | number;
   discounted_price: string | number;
   effective_price: string | number;
-  stock: number;
   installment_enabled: boolean;
   minimum_deposit_percentage?: string | number | null;
   installment_duration_months?: string | number | null;

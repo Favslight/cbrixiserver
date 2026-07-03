@@ -33,13 +33,10 @@ CREATE TABLE products (
     image_public_id TEXT,
     image_urls TEXT[] DEFAULT ARRAY[]::TEXT[],
     image_public_ids TEXT[] DEFAULT ARRAY[]::TEXT[],
-    stock INTEGER DEFAULT 0,
     installment_enabled BOOLEAN DEFAULT FALSE,
     minimum_deposit_percentage INTEGER DEFAULT 50,
     installment_duration_months INTEGER,
-    fine_percentage_on_default INTEGER DEFAULT 0,
-    minimum_wallet_balance_required NUMERIC(15,2) DEFAULT 0,
-    grace_period_days INTEGER DEFAULT 0,
+    display_order INTEGER,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
@@ -52,7 +49,6 @@ CREATE TABLE IF NOT EXISTS product_variants (
     specs JSONB DEFAULT '{}'::JSONB,
     sku VARCHAR(120),
     price NUMERIC(15,2) NOT NULL,
-    stock INTEGER DEFAULT 0,
     is_default BOOLEAN DEFAULT FALSE,
     is_active BOOLEAN DEFAULT TRUE,
     sort_order INTEGER DEFAULT 0,
@@ -320,9 +316,7 @@ ADD COLUMN IF NOT EXISTS discounted_price NUMERIC(15,2),
 ADD COLUMN IF NOT EXISTS installment_enabled BOOLEAN DEFAULT FALSE,
 ADD COLUMN IF NOT EXISTS minimum_deposit_percentage INTEGER DEFAULT 50,
 ADD COLUMN IF NOT EXISTS installment_duration_months INTEGER,
-ADD COLUMN IF NOT EXISTS fine_percentage_on_default INTEGER DEFAULT 0,
-ADD COLUMN IF NOT EXISTS minimum_wallet_balance_required NUMERIC(15,2) DEFAULT 0,
-ADD COLUMN IF NOT EXISTS grace_period_days INTEGER DEFAULT 0;
+ADD COLUMN IF NOT EXISTS display_order INTEGER;
 
 UPDATE products
 SET
@@ -351,7 +345,6 @@ CREATE TABLE IF NOT EXISTS product_variants (
     specs JSONB DEFAULT '{}'::JSONB,
     sku VARCHAR(120),
     price NUMERIC(15,2) NOT NULL,
-    stock INTEGER DEFAULT 0,
     is_default BOOLEAN DEFAULT FALSE,
     is_active BOOLEAN DEFAULT TRUE,
     sort_order INTEGER DEFAULT 0,
@@ -368,15 +361,28 @@ ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0,
 ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW(),
 ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
 
-INSERT INTO product_variants (product_id, name, specs, price, stock, is_default, sort_order)
-SELECT p.id, 'Default', '{}'::JSONB, p.price, COALESCE(p.stock, 0), TRUE, 0
+INSERT INTO product_variants (product_id, name, specs, price, is_default, sort_order)
+SELECT p.id, 'Default', '{}'::JSONB, p.price, TRUE, 0
 FROM products p
 WHERE NOT EXISTS (
     SELECT 1 FROM product_variants pv WHERE pv.product_id = p.id
 );
 
+ALTER TABLE products
+DROP COLUMN IF EXISTS stock,
+DROP COLUMN IF EXISTS fine_percentage_on_default,
+DROP COLUMN IF EXISTS minimum_wallet_balance_required,
+DROP COLUMN IF EXISTS grace_period_days;
+
+ALTER TABLE product_variants
+DROP COLUMN IF EXISTS stock;
+
 CREATE INDEX IF NOT EXISTS idx_product_variants_product_id
 ON product_variants(product_id);
+
+CREATE INDEX IF NOT EXISTS idx_products_display_order
+ON products(display_order ASC, created_at DESC)
+WHERE is_active = TRUE;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_product_variants_one_default
 ON product_variants(product_id)

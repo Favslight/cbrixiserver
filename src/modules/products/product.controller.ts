@@ -1,6 +1,6 @@
 // src/modules/products/product.controller.ts
 import { FastifyRequest, FastifyReply } from "fastify";
-import { calculateProductDiscount, createProduct, deleteProduct, getActiveProducts, getActiveProductsByCategory, getAllProducts, updateProduct } from "./product.service";
+import { calculateProductDiscount, createProduct, deleteProduct, getActiveProducts, getActiveProductsByCategory, getAllProducts, reorderHomepageProducts, updateProduct } from "./product.service";
 import { uploadToCloudinary } from "../../plugins/cloudinary";
 
 const MAX_PRODUCT_IMAGES = 7;
@@ -57,6 +57,21 @@ const parseNumberField = (value: string | undefined) => {
   return Number.isNaN(num) ? null : num;
 };
 
+const parseDisplayOrderValue = (value: unknown) => {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized || normalized === "null" || normalized === "none") {
+      return null;
+    }
+  }
+
+  const num = Number(value);
+  return Number.isInteger(num) && num >= 1 ? num : Number.NaN;
+};
+
 const parseJsonArray = <T>(value: string | undefined): T[] | undefined => {
   if (value === undefined || value === "") return undefined;
 
@@ -84,23 +99,15 @@ const parseJsonArrayField = <T>(value: string | undefined, fieldName: string) =>
   }
 };
 
-const derivePriceAndStockFromVariants = (
+const derivePriceFromVariants = (
   priceValue: string | undefined,
-  stockValue: string | undefined,
   variants: any[] | undefined
 ) => {
   const activeVariants = (variants ?? []).filter((variant) => variant?.is_active !== false);
   const variantPrices = activeVariants.map((variant) => Number(variant?.price));
   const validPrices = variantPrices.filter((price) => Number.isFinite(price) && price >= 0);
-  const variantStocks = activeVariants.map((variant) => Number(variant?.stock ?? 0));
-  const validStocks = variantStocks.filter((stock) => Number.isInteger(stock) && stock >= 0);
 
-  return {
-    priceValue: priceValue ?? (validPrices.length ? String(Math.min(...validPrices)) : undefined),
-    stockValue: stockValue ?? (validStocks.length === activeVariants.length
-      ? String(validStocks.reduce((sum, stock) => sum + stock, 0))
-      : undefined)
-  };
+  return priceValue ?? (validPrices.length ? String(Math.min(...validPrices)) : undefined);
 };
 
 const normalizeExistingImages = (
@@ -250,18 +257,17 @@ export const createProductController = async (
 
   const name = readFieldValue(fields, "name");
   const priceValue = readFieldValue(fields, "price");
-  const stockValue = readFieldValue(fields, "stock");
   const description = readFieldValue(fields, "description");
   const category = readFieldValue(fields, "category");
   const installmentEnabledValue = readFieldValue(fields, "installment_enabled");
   const minDepositValue = readFieldValue(fields, "minimum_deposit_percentage");
   const durationValue = readFieldValue(fields, "installment_duration_months");
-  const fineValue = readFieldValue(fields, "fine_percentage_on_default");
-  const minWalletValue = readFieldValue(fields, "minimum_wallet_balance_required");
-  const gracePeriodValue = readFieldValue(fields, "grace_period_days");
   const discountEnabledValue = readFieldValue(fields, "discount_enabled") ?? readFieldValue(fields, "discountEnabled");
   const discountPercentageValue = readFieldValue(fields, "discount_percentage") ?? readFieldValue(fields, "discountPercentage");
   const variantsFieldValue = readFieldValue(fields, "variants") ?? readFieldValue(fields, "product_variants");
+  const displayOrder = parseDisplayOrderValue(
+    readFieldValue(fields, "display_order") ?? readFieldValue(fields, "displayOrder")
+  );
   const parsedVariants = parseJsonArrayField<any>(variantsFieldValue, "variants");
   const thumbnailIndex = parseOptionalInteger(
     readFieldValue(fields, "thumbnail_index") ?? readFieldValue(fields, "thumbnailIndex")
@@ -272,21 +278,18 @@ export const createProductController = async (
     return reply.status(400).send({ message: parsedVariants.error });
   }
 
-  const derived = derivePriceAndStockFromVariants(priceValue, stockValue, parsedVariants.value);
-  const effectivePriceValue = derived.priceValue;
-  const effectiveStockValue = derived.stockValue;
+  const effectivePriceValue = derivePriceFromVariants(priceValue, parsedVariants.value);
 
-  if (!name || !effectivePriceValue || !effectiveStockValue) {
+  if (!name || !effectivePriceValue) {
     return reply.status(400).send({
-      message: "name, price and stock are required unless variants include price and stock"
+      message: "name and price are required unless variants include price"
     });
   }
 
   const price = Number(effectivePriceValue);
-  const stock = Number(effectiveStockValue);
-  if (Number.isNaN(price) || Number.isNaN(stock)) {
+  if (Number.isNaN(price)) {
     return reply.status(400).send({
-      message: "price and stock must be valid numbers"
+      message: "price must be a valid number"
     });
   }
 
@@ -300,6 +303,10 @@ export const createProductController = async (
 
   if (discountPercentage === null) {
     return reply.status(400).send({ message: "discount_percentage must be a valid number" });
+  }
+
+  if (Number.isNaN(displayOrder)) {
+    return reply.status(400).send({ message: "display_order must be a positive integer or null" });
   }
 
   try {
@@ -328,16 +335,13 @@ export const createProductController = async (
     category,
     price,
     ...imagePayload,
-    stock,
     variants: parsedVariants.value,
     installment_enabled: installmentEnabledValue === "true",
     minimum_deposit_percentage: parseOptionalNumber(minDepositValue),
     installment_duration_months: parseOptionalNumber(durationValue),
-    fine_percentage_on_default: parseOptionalNumber(fineValue),
-    minimum_wallet_balance_required: parseOptionalNumber(minWalletValue),
-    grace_period_days: parseOptionalNumber(gracePeriodValue),
     discount_enabled: discountEnabled,
-    discount_percentage: discountPercentage
+    discount_percentage: discountPercentage,
+    display_order: displayOrder
   };
 
   let product;
@@ -346,10 +350,10 @@ export const createProductController = async (
   } catch (error: any) {
     if (
       error?.message === "variant price must be a valid non-negative number"
-      || error?.message === "variant stock must be a valid non-negative integer"
       || error?.message === "At least one active product variant is required"
       || error?.message === "price must be a valid non-negative number"
       || error?.message === "discount_percentage must be greater than 0 and less than or equal to 100 when discount is active"
+      || error?.message === "display_order must be a positive integer or null"
     ) {
       return reply.status(400).send({ message: error.message });
     }
@@ -393,6 +397,39 @@ export const deleteProductController = async (
 
 };
 
+export const reorderHomepageProductsController = async (
+  req: FastifyRequest,
+  reply: FastifyReply
+) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const productIds = body.product_ids ?? body.productIds ?? body.ordered_product_ids;
+
+  if (!Array.isArray(productIds)) {
+    return reply.status(400).send({ message: "product_ids must be an array" });
+  }
+
+  try {
+    const products = await reorderHomepageProducts(productIds as string[]);
+
+    return reply.send({
+      success: true,
+      products
+    });
+  } catch (error: any) {
+    if (
+      error?.message === "product_ids must be an array"
+      || error?.message === "product_ids must contain valid product ids"
+      || error?.message === "product_ids must not contain duplicates"
+      || error?.message === "All product_ids must be active products"
+    ) {
+      return reply.status(400).send({ message: error.message });
+    }
+
+    req.log.error(error);
+    return reply.status(500).send({ message: "Failed to reorder products" });
+  }
+};
+
 export const updateProductController = async (
   req: FastifyRequest<{ Params: { id: string } }>,
   reply: FastifyReply
@@ -405,15 +442,12 @@ export const updateProductController = async (
     let description: string | undefined;
     let category: string | undefined;
     let priceValue: string | undefined;
-    let stockValue: string | undefined;
     let installmentEnabledValue: string | undefined;
     let minDepositValue: string | undefined;
     let durationValue: string | undefined;
-    let fineValue: string | undefined;
-    let minWalletValue: string | undefined;
-    let gracePeriodValue: string | undefined;
     let discountEnabledValue: string | undefined;
     let discountPercentageValue: string | undefined;
+    let displayOrder: number | null | undefined;
     let variantsValue: string | undefined;
     let variants: any[] | undefined;
     let variantsProvided = false;
@@ -453,15 +487,14 @@ export const updateProductController = async (
       description = readFieldValue(fields, "description");
       category = readFieldValue(fields, "category");
       priceValue = readFieldValue(fields, "price");
-      stockValue = readFieldValue(fields, "stock");
       installmentEnabledValue = readFieldValue(fields, "installment_enabled") ?? readFieldValue(fields, "installmentEnabled");
       minDepositValue = readFieldValue(fields, "minimum_deposit_percentage") ?? readFieldValue(fields, "minimumDepositPercentage");
       durationValue = readFieldValue(fields, "installment_duration_months") ?? readFieldValue(fields, "installmentDurationMonths");
-      fineValue = readFieldValue(fields, "fine_percentage_on_default") ?? readFieldValue(fields, "finePercentageOnDefault");
-      minWalletValue = readFieldValue(fields, "minimum_wallet_balance_required") ?? readFieldValue(fields, "minimumWalletBalanceRequired");
-      gracePeriodValue = readFieldValue(fields, "grace_period_days") ?? readFieldValue(fields, "gracePeriodDays");
       discountEnabledValue = readFieldValue(fields, "discount_enabled") ?? readFieldValue(fields, "discountEnabled");
       discountPercentageValue = readFieldValue(fields, "discount_percentage") ?? readFieldValue(fields, "discountPercentage");
+      displayOrder = parseDisplayOrderValue(
+        readFieldValue(fields, "display_order") ?? readFieldValue(fields, "displayOrder")
+      );
       variantsValue = readFieldValue(fields, "variants") ?? readFieldValue(fields, "product_variants");
       const parsedVariants = parseJsonArrayField<any>(variantsValue, "variants");
       if (parsedVariants.error) {
@@ -488,7 +521,6 @@ export const updateProductController = async (
       description = typeof body.description === "string" ? body.description : undefined;
       category = typeof body.category === "string" ? body.category : undefined;
       priceValue = body.price !== undefined ? String(body.price) : undefined;
-      stockValue = body.stock !== undefined ? String(body.stock) : undefined;
       installmentEnabledValue = body.installment_enabled !== undefined
         ? String(body.installment_enabled)
         : body.installmentEnabled !== undefined
@@ -504,21 +536,6 @@ export const updateProductController = async (
         : body.installmentDurationMonths !== undefined
           ? String(body.installmentDurationMonths)
           : undefined;
-      fineValue = body.fine_percentage_on_default !== undefined
-        ? String(body.fine_percentage_on_default)
-        : body.finePercentageOnDefault !== undefined
-          ? String(body.finePercentageOnDefault)
-          : undefined;
-      minWalletValue = body.minimum_wallet_balance_required !== undefined
-        ? String(body.minimum_wallet_balance_required)
-        : body.minimumWalletBalanceRequired !== undefined
-          ? String(body.minimumWalletBalanceRequired)
-          : undefined;
-      gracePeriodValue = body.grace_period_days !== undefined
-        ? String(body.grace_period_days)
-        : body.gracePeriodDays !== undefined
-          ? String(body.gracePeriodDays)
-          : undefined;
       discountEnabledValue = body.discount_enabled !== undefined
         ? String(body.discount_enabled)
         : body.discountEnabled !== undefined
@@ -529,6 +546,9 @@ export const updateProductController = async (
         : body.discountPercentage !== undefined
           ? String(body.discountPercentage)
           : undefined;
+      displayOrder = parseDisplayOrderValue(
+        body.display_order !== undefined ? body.display_order : body.displayOrder
+      );
       if (Array.isArray(body.variants)) {
         variantsProvided = true;
         variants = body.variants as any[];
@@ -572,22 +592,14 @@ export const updateProductController = async (
     }
 
     const parsedPrice = priceValue !== undefined && priceValue !== "" ? Number(priceValue) : undefined;
-    const parsedStock = stockValue !== undefined && stockValue !== "" ? Number(stockValue) : undefined;
     const parsedInstallmentEnabled = parseOptionalBoolean(installmentEnabledValue);
     const parsedMinDeposit = parseNumberField(minDepositValue);
     const parsedDuration = parseNumberField(durationValue);
-    const parsedFine = parseNumberField(fineValue);
-    const parsedMinWallet = parseNumberField(minWalletValue);
-    const parsedGracePeriod = parseNumberField(gracePeriodValue);
     const parsedDiscountEnabled = parseOptionalBoolean(discountEnabledValue);
     const parsedDiscountPercentage = parseNumberField(discountPercentageValue);
 
     if (parsedPrice !== undefined && Number.isNaN(parsedPrice)) {
       return reply.status(400).send({ message: "price must be a valid number" });
-    }
-
-    if (parsedStock !== undefined && Number.isNaN(parsedStock)) {
-      return reply.status(400).send({ message: "stock must be a valid number" });
     }
 
     if (parsedInstallmentEnabled === null) {
@@ -602,18 +614,6 @@ export const updateProductController = async (
       return reply.status(400).send({ message: "installment_duration_months must be a valid number" });
     }
 
-    if (parsedFine === null) {
-      return reply.status(400).send({ message: "fine_percentage_on_default must be a valid number" });
-    }
-
-    if (parsedMinWallet === null) {
-      return reply.status(400).send({ message: "minimum_wallet_balance_required must be a valid number" });
-    }
-
-    if (parsedGracePeriod === null) {
-      return reply.status(400).send({ message: "grace_period_days must be a valid number" });
-    }
-
     if (parsedDiscountEnabled === null) {
       return reply.status(400).send({ message: "discount_enabled must be true or false" });
     }
@@ -622,21 +622,22 @@ export const updateProductController = async (
       return reply.status(400).send({ message: "discount_percentage must be a valid number" });
     }
 
+    if (Number.isNaN(displayOrder)) {
+      return reply.status(400).send({ message: "display_order must be a positive integer or null" });
+    }
+
     const updateData: any = {
       name,
       description,
       category,
       price: parsedPrice,
-      stock: parsedStock,
       variants: variantsProvided ? variants : undefined,
       installment_enabled: parsedInstallmentEnabled,
       minimum_deposit_percentage: parsedMinDeposit,
       installment_duration_months: parsedDuration,
-      fine_percentage_on_default: parsedFine,
-      minimum_wallet_balance_required: parsedMinWallet,
-      grace_period_days: parsedGracePeriod,
       discount_enabled: parsedDiscountEnabled,
-      discount_percentage: parsedDiscountPercentage
+      discount_percentage: parsedDiscountPercentage,
+      display_order: displayOrder
     };
 
     const existingImages = normalizeExistingImages(
@@ -691,8 +692,8 @@ export const updateProductController = async (
       error?.message === "price must be a valid non-negative number"
       || error?.message === "discount_percentage must be greater than 0 and less than or equal to 100 when discount is active"
       || error?.message === "variant price must be a valid non-negative number"
-      || error?.message === "variant stock must be a valid non-negative integer"
       || error?.message === "At least one active product variant is required"
+      || error?.message === "display_order must be a positive integer or null"
     ) {
       return reply.status(400).send({ message: error.message });
     }

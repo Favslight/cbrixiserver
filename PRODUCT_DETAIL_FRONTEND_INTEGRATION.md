@@ -27,13 +27,10 @@ type Product = {
   effective_price: string | number;
   image_url?: string | null; // selected thumbnail / primary image
   image_urls: string[]; // ordered gallery images
-  stock: number;
+  display_order?: number | null; // homepage display position; null products appear after ordered products
   installment_enabled: boolean;
   minimum_deposit_percentage?: string | number | null;
   installment_duration_months?: string | number | null;
-  fine_percentage_on_default?: string | number | null;
-  minimum_wallet_balance_required?: string | number | null;
-  grace_period_days?: string | number | null;
   has_variants: boolean;
   default_variant_id?: string | null;
   variant_price_min?: string | number;
@@ -49,7 +46,6 @@ type ProductVariant = {
   discount_amount: string | number;
   discounted_price: string | number;
   effective_price: string | number;
-  stock: number;
 };
 ```
 
@@ -96,7 +92,9 @@ Content-Type: multipart/form-data
 const form = new FormData();
 form.append("name", name);
 form.append("price", String(price));
-form.append("stock", String(stock));
+if (displayPosition !== undefined && displayPosition !== null) {
+  form.append("display_order", String(displayPosition));
+}
 form.append("category", category);
 form.append("description", description); // raw textarea value, newlines preserved
 form.append("variants", JSON.stringify(variants)); // see PRODUCT_VARIANT_FRONTEND_INTEGRATION.md
@@ -105,16 +103,89 @@ form.append("installment_enabled", String(installmentEnabled));
 if (installmentEnabled) {
   form.append("minimum_deposit_percentage", String(minimumDepositPercentage));
   form.append("installment_duration_months", String(installmentDurationMonths));
-  form.append("fine_percentage_on_default", String(finePercentageOnDefault ?? 0));
-  form.append("minimum_wallet_balance_required", String(minimumWalletBalanceRequired ?? 0));
-  form.append("grace_period_days", String(gracePeriodDays ?? 0));
 }
 
 form.append("thumbnail_index", String(thumbnailIndex));
 orderedFiles.forEach((file) => form.append("images", file));
 ```
 
-For edits, `PUT /admin/products/:id` accepts the same installment fields in multipart or JSON.
+For edits, `PUT /admin/products/:id` accepts the same installment fields and `display_order` in multipart or JSON. Send `display_order: null` in JSON to remove a product from the manually ordered homepage group.
+
+## Product Display Order
+
+Homepage product order is admin-controlled when `display_order` is set.
+
+Public homepage endpoint:
+
+```ts
+GET /products
+```
+
+Sort rule:
+
+```sql
+ORDER BY display_order ASC NULLS LAST, created_at DESC
+```
+
+Category endpoint:
+
+```ts
+GET /products/category/:category
+```
+
+Category pages intentionally stay newest first for now:
+
+```sql
+ORDER BY created_at DESC
+```
+
+Admin product table should show a `Display Order` column from `product.display_order`.
+
+Manual number input:
+
+```ts
+PUT /admin/products/:id
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{
+  "display_order": 2
+}
+```
+
+The backend inserts that product at the requested 1-based position and rewrites other active ordered products to prevent duplicate positions. Example: changing Bike from `5` to `2` moves Bike into position 2 and shifts the affected products down.
+
+To clear the manual homepage position:
+
+```ts
+PUT /admin/products/:id
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{
+  "display_order": null
+}
+```
+
+Drag-and-drop ordering:
+
+```ts
+PATCH /admin/products/display-order
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{
+  "product_ids": [
+    "bike-product-id",
+    "iphone-product-id",
+    "laptop-product-id",
+    "tv-product-id",
+    "smart-watch-product-id"
+  ]
+}
+```
+
+This endpoint rewrites the homepage order exactly as sent: first ID becomes `display_order = 1`, second becomes `2`, and so on. Active products omitted from `product_ids` are cleared to `display_order = null`, so they appear after manually ordered products by newest first.
 
 ## Description Formatting
 

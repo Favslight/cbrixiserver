@@ -1,6 +1,6 @@
 // src/modules/products/product.routes.ts
 import { FastifyInstance } from "fastify";
-import { createProductController, deleteProductController, getProductsController, getPublicProductsByCategoryController, getPublicProductsController, previewProductDiscountController, updateProductController } from "./product.controller";
+import { createProductController, deleteProductController, getProductsController, getPublicProductsByCategoryController, getPublicProductsController, previewProductDiscountController, reorderHomepageProductsController, updateProductController } from "./product.controller";
 import { requireAdmin } from "../admin/admin.auth";
 
 export async function productRoutes(app: FastifyInstance) {
@@ -16,6 +16,10 @@ export async function productRoutes(app: FastifyInstance) {
   app.get("/admin/products", 
     { preHandler: [requireAdmin] }, 
     getProductsController);
+
+  app.patch("/admin/products/display-order",
+    { preHandler: [requireAdmin] },
+    reorderHomepageProductsController);
 
     app.delete<{ Params: { id: string } }>(
   "/admin/products/:id",

@@ -11,7 +11,6 @@ type ProductVariantInput = {
   specs?: Record<string, unknown> | null;
   sku?: string | null;
   price?: number | string;
-  stock?: number | string;
   is_active?: boolean;
 };
 
@@ -75,9 +74,13 @@ export const ensureProductColumns = async () => {
         ADD COLUMN IF NOT EXISTS installment_enabled BOOLEAN DEFAULT FALSE,
         ADD COLUMN IF NOT EXISTS minimum_deposit_percentage INTEGER DEFAULT 50,
         ADD COLUMN IF NOT EXISTS installment_duration_months INTEGER,
-        ADD COLUMN IF NOT EXISTS fine_percentage_on_default INTEGER DEFAULT 0,
-        ADD COLUMN IF NOT EXISTS minimum_wallet_balance_required NUMERIC(15,2) DEFAULT 0,
-        ADD COLUMN IF NOT EXISTS grace_period_days INTEGER DEFAULT 0
+        ADD COLUMN IF NOT EXISTS display_order INTEGER
+      `);
+
+      await pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_products_display_order
+        ON products(display_order ASC, created_at DESC)
+        WHERE is_active = TRUE
       `);
 
       await pool.query(`
@@ -110,7 +113,6 @@ export const ensureProductColumns = async () => {
           specs JSONB DEFAULT '{}'::JSONB,
           sku VARCHAR(120),
           price NUMERIC(15,2) NOT NULL,
-          stock INTEGER DEFAULT 0,
           is_default BOOLEAN DEFAULT FALSE,
           is_active BOOLEAN DEFAULT TRUE,
           sort_order INTEGER DEFAULT 0,
@@ -131,12 +133,25 @@ export const ensureProductColumns = async () => {
       `);
 
       await pool.query(`
-        INSERT INTO product_variants (product_id, name, specs, price, stock, is_default, sort_order)
-        SELECT p.id, 'Default', '{}'::JSONB, p.price, COALESCE(p.stock, 0), TRUE, 0
+        INSERT INTO product_variants (product_id, name, specs, price, is_default, sort_order)
+        SELECT p.id, 'Default', '{}'::JSONB, p.price, TRUE, 0
         FROM products p
         WHERE NOT EXISTS (
           SELECT 1 FROM product_variants pv WHERE pv.product_id = p.id
         )
+      `);
+
+      await pool.query(`
+        ALTER TABLE products
+        DROP COLUMN IF EXISTS stock,
+        DROP COLUMN IF EXISTS fine_percentage_on_default,
+        DROP COLUMN IF EXISTS minimum_wallet_balance_required,
+        DROP COLUMN IF EXISTS grace_period_days
+      `);
+
+      await pool.query(`
+        ALTER TABLE product_variants
+        DROP COLUMN IF EXISTS stock
       `);
 
       await pool.query(`
@@ -223,13 +238,10 @@ const productSelectColumns = `
   image_public_id,
   ${productImageUrlsSelect},
   COALESCE(image_public_ids, ARRAY[]::TEXT[]) AS image_public_ids,
-  stock,
   installment_enabled,
   minimum_deposit_percentage,
   installment_duration_months,
-  fine_percentage_on_default,
-  minimum_wallet_balance_required,
-  grace_period_days,
+  display_order,
   is_active,
   created_at,
   updated_at
@@ -254,9 +266,8 @@ const variantSelectColumns = `
   END AS discounted_price,
   CASE
     WHEN COALESCE(p.discount_enabled, FALSE) THEN GREATEST(ROUND(pv.price - ((pv.price * COALESCE(p.discount_percentage, 0)) / 100), 2), 0)
-    ELSE pv.price
+  ELSE pv.price
   END AS effective_price,
-  pv.stock,
   pv.is_default,
   pv.is_active,
   pv.sort_order,
@@ -280,8 +291,7 @@ const getVariantName = (variant: ProductVariantInput, index: number) => {
 
 const normalizeVariantInputs = (
   variants: ProductVariantInput[] | undefined,
-  fallbackPrice: number | string,
-  fallbackStock: number | string
+  fallbackPrice: number | string
 ) => {
   const inputVariants = variants?.length
     ? variants
@@ -289,20 +299,14 @@ const normalizeVariantInputs = (
         name: "Default",
         specs: {},
         price: fallbackPrice,
-        stock: fallbackStock,
         is_active: true
       }];
 
   const normalized = inputVariants.map((variant, index) => {
     const price = Number(variant.price);
-    const stock = Number(variant.stock ?? 0);
 
     if (!Number.isFinite(price) || price < 0) {
       throw new Error("variant price must be a valid non-negative number");
-    }
-
-    if (!Number.isInteger(stock) || stock < 0) {
-      throw new Error("variant stock must be a valid non-negative integer");
     }
 
     const specs = variant.specs && typeof variant.specs === "object" && !Array.isArray(variant.specs)
@@ -315,7 +319,6 @@ const normalizeVariantInputs = (
       specs,
       sku: typeof variant.sku === "string" && variant.sku.trim() ? variant.sku.trim() : null,
       price: roundMoney(price),
-      stock,
       is_active: variant.is_active !== false,
       sort_order: index
     };
@@ -388,10 +391,7 @@ const attachVariants = async (products: any[], includeInactive = false) => {
       price: lowestVariant?.price ?? product.price,
       discount_amount: lowestVariant?.discount_amount ?? product.discount_amount,
       discounted_price: lowestVariant?.discounted_price ?? product.discounted_price,
-      effective_price: lowestVariant?.effective_price ?? product.effective_price,
-      stock: activeVariants.length
-        ? activeVariants.reduce((sum, variant) => sum + Number(variant.stock ?? 0), 0)
-        : product.stock
+      effective_price: lowestVariant?.effective_price ?? product.effective_price
     };
   });
 };
@@ -410,8 +410,8 @@ const insertVariants = async (
     await client.query(
       `
       INSERT INTO product_variants
-        (product_id, name, specs, sku, price, stock, is_default, is_active, sort_order)
-      VALUES ($1,$2,$3::JSONB,$4,$5,$6,$7,$8,$9)
+        (product_id, name, specs, sku, price, is_default, is_active, sort_order)
+      VALUES ($1,$2,$3::JSONB,$4,$5,$6,$7,$8)
       `,
       [
         productId,
@@ -419,7 +419,6 @@ const insertVariants = async (
         JSON.stringify(variant.specs),
         variant.sku,
         variant.price,
-        variant.stock,
         isDefault,
         variant.is_active,
         variant.sort_order
@@ -453,12 +452,11 @@ const replaceVariants = async (
             specs=$2::JSONB,
             sku=$3,
             price=$4,
-            stock=$5,
-            is_default=$6,
-            is_active=$7,
-            sort_order=$8,
+            is_default=$5,
+            is_active=$6,
+            sort_order=$7,
             updated_at=NOW()
-        WHERE id=$9 AND product_id=$10
+        WHERE id=$8 AND product_id=$9
         RETURNING id
         `,
         [
@@ -466,7 +464,6 @@ const replaceVariants = async (
           JSON.stringify(variant.specs),
           variant.sku,
           variant.price,
-          variant.stock,
           isDefault,
           variant.is_active,
           variant.sort_order,
@@ -484,8 +481,8 @@ const replaceVariants = async (
     const inserted = await client.query(
       `
       INSERT INTO product_variants
-        (product_id, name, specs, sku, price, stock, is_default, is_active, sort_order)
-      VALUES ($1,$2,$3::JSONB,$4,$5,$6,$7,$8,$9)
+        (product_id, name, specs, sku, price, is_default, is_active, sort_order)
+      VALUES ($1,$2,$3::JSONB,$4,$5,$6,$7,$8)
       RETURNING id
       `,
       [
@@ -494,7 +491,6 @@ const replaceVariants = async (
         JSON.stringify(variant.specs),
         variant.sku,
         variant.price,
-        variant.stock,
         isDefault,
         variant.is_active,
         variant.sort_order
@@ -506,18 +502,111 @@ const replaceVariants = async (
   return submittedExistingIds;
 };
 
+const homepageProductOrderClause = `
+  display_order ASC NULLS LAST,
+  created_at DESC
+`;
+
+const normalizeDisplayOrderInput = (value: unknown) => {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") return null;
+
+  const displayOrder = Number(value);
+  if (!Number.isInteger(displayOrder) || displayOrder < 1) {
+    throw new Error("display_order must be a positive integer or null");
+  }
+
+  return displayOrder;
+};
+
+const rewriteActiveProductDisplayOrder = async (
+  client: PoolClient,
+  orderedProductIds: string[]
+) => {
+  await client.query(`
+    UPDATE products
+    SET display_order = NULL,
+        updated_at = NOW()
+    WHERE is_active = TRUE
+      AND display_order IS NOT NULL
+  `);
+
+  if (!orderedProductIds.length) return;
+
+  const valuesSql = orderedProductIds
+    .map((_, index) => `($${index + 1}::UUID, ${index + 1})`)
+    .join(",");
+
+  await client.query(
+    `
+    UPDATE products AS p
+    SET display_order = ordered.display_order,
+        updated_at = NOW()
+    FROM (VALUES ${valuesSql}) AS ordered(id, display_order)
+    WHERE p.id = ordered.id
+    `,
+    orderedProductIds
+  );
+};
+
+const setProductDisplayOrder = async (
+  client: PoolClient,
+  productId: string,
+  displayOrderInput: unknown
+) => {
+  const displayOrder = normalizeDisplayOrderInput(displayOrderInput);
+  if (displayOrder === undefined) return;
+
+  await client.query("LOCK TABLE products IN SHARE ROW EXCLUSIVE MODE");
+
+  const current = await client.query(
+    `SELECT id, is_active FROM products WHERE id=$1`,
+    [productId]
+  );
+
+  if (!current.rows[0]) {
+    throw new Error("Product not found");
+  }
+
+  const orderedResult = await client.query(
+    `
+    SELECT id
+    FROM products
+    WHERE is_active = TRUE
+      AND display_order IS NOT NULL
+      AND id <> $1
+    ORDER BY display_order ASC, created_at DESC, id ASC
+    `,
+    [productId]
+  );
+
+  const orderedProductIds = orderedResult.rows.map((row) => row.id);
+
+  if (displayOrder !== null && current.rows[0].is_active === true) {
+    const insertIndex = Math.min(displayOrder - 1, orderedProductIds.length);
+    orderedProductIds.splice(insertIndex, 0, productId);
+  }
+
+  await rewriteActiveProductDisplayOrder(client, orderedProductIds);
+
+  if (displayOrder === null || current.rows[0].is_active !== true) {
+    await client.query(
+      `UPDATE products SET display_order=NULL, updated_at=NOW() WHERE id=$1`,
+      [productId]
+    );
+  }
+};
+
 export const createProduct = async (data: any) => {
   await ensureProductColumns();
 
-  const variants = normalizeVariantInputs(data.variants, data.price, data.stock);
+  const variants = normalizeVariantInputs(data.variants, data.price);
   const activeVariants = variants.filter((variant) => variant.is_active);
   const lowestVariant = activeVariants.reduce((lowest, variant) => (
     variant.price < lowest.price ? variant : lowest
   ), activeVariants[0]);
-  const totalStock = activeVariants.reduce((sum, variant) => sum + variant.stock, 0);
 
   const productPrice = data.price ?? lowestVariant.price;
-  const productStock = data.stock ?? totalStock;
   const discount = calculateProductDiscount(
     productPrice,
     data.discount_enabled === true,
@@ -533,12 +622,11 @@ export const createProduct = async (data: any) => {
     INSERT INTO products
   (name, description, category, price, image_url, image_public_id,
    image_urls, image_public_ids,
-   stock, installment_enabled, minimum_deposit_percentage,
-   installment_duration_months, fine_percentage_on_default,
-   minimum_wallet_balance_required, grace_period_days,
+   installment_enabled, minimum_deposit_percentage,
+   installment_duration_months,
    discount_enabled, discount_percentage, discount_amount, discounted_price)
     VALUES
-    ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+    ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
     RETURNING ${productSelectColumns}
     `;
 
@@ -551,13 +639,9 @@ export const createProduct = async (data: any) => {
       data.image_public_id,
       data.image_urls,
       data.image_public_ids,
-      productStock,
       data.installment_enabled,
       data.minimum_deposit_percentage,
       data.installment_duration_months,
-      data.fine_percentage_on_default,
-      data.minimum_wallet_balance_required,
-      data.grace_period_days,
       discount.discount_enabled,
       discount.discount_percentage,
       discount.discount_amount,
@@ -566,9 +650,14 @@ export const createProduct = async (data: any) => {
 
     const result = await client.query(query, values);
     await insertVariants(client, result.rows[0].id, variants);
+    await setProductDisplayOrder(client, result.rows[0].id, data.display_order);
+    const productResult = await client.query(
+      `SELECT ${productSelectColumns} FROM products WHERE id=$1`,
+      [result.rows[0].id]
+    );
     await client.query("COMMIT");
 
-    const [product] = await attachVariants([result.rows[0]], true);
+    const [product] = await attachVariants([productResult.rows[0]], true);
     return product;
   } catch (error) {
     await client.query("ROLLBACK");
@@ -585,7 +674,7 @@ export const getAllProducts = async () => {
     SELECT ${productSelectColumns}
     FROM products
     WHERE is_active = true
-    ORDER BY created_at DESC
+    ORDER BY ${homepageProductOrderClause}
   `);
 
   return attachVariants(result.rows, true);
@@ -594,29 +683,43 @@ export const getAllProducts = async () => {
 export const deleteProduct = async (id: string) => {
   await ensureProductColumns();
 
-  const product = await pool.query(
-    `SELECT image_public_id, image_public_ids FROM products WHERE id=$1`,
-    [id]
-  );
+  const client = await pool.connect();
 
-  if (!product.rows[0]) {
-    throw new Error("Product not found");
+  try {
+    await client.query("BEGIN");
+
+    const product = await client.query(
+      `SELECT image_public_id, image_public_ids FROM products WHERE id=$1`,
+      [id]
+    );
+
+    if (!product.rows[0]) {
+      throw new Error("Product not found");
+    }
+
+    const result = await client.query(
+      `UPDATE products
+       SET is_active=false, display_order=NULL, updated_at=NOW()
+       WHERE id=$1
+       RETURNING *`,
+      [id]
+    );
+
+    await client.query(
+      `UPDATE product_variants SET is_active=false, updated_at=NOW() WHERE product_id=$1`,
+      [id]
+    );
+
+    await setProductDisplayOrder(client, id, null);
+    await client.query("COMMIT");
+
+    return result.rows[0];
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
   }
-
-  const result = await pool.query(
-    `UPDATE products
-     SET is_active=false, updated_at=NOW()
-     WHERE id=$1
-     RETURNING *`,
-    [id]
-  );
-
-  await pool.query(
-    `UPDATE product_variants SET is_active=false, updated_at=NOW() WHERE product_id=$1`,
-    [id]
-  );
-
-  return result.rows[0];
 };
 
 export const updateProduct = async (id: string, data: any) => {
@@ -635,15 +738,12 @@ export const updateProduct = async (id: string, data: any) => {
     "image_public_id",
     "image_urls",
     "image_public_ids",
-    "stock",
     "installment_enabled",
     "minimum_deposit_percentage",
     "installment_duration_months",
-    "fine_percentage_on_default",
-    "minimum_wallet_balance_required",
-    "grace_period_days",
     "discount_enabled",
     "discount_percentage",
+    "display_order",
     "variants"
   ].some((key) => data[key] !== undefined);
 
@@ -659,7 +759,7 @@ export const updateProduct = async (id: string, data: any) => {
     await client.query("BEGIN");
 
     const current = await client.query(
-      `SELECT price, stock, discount_enabled, discount_percentage FROM products WHERE id=$1`,
+      `SELECT price, discount_enabled, discount_percentage FROM products WHERE id=$1`,
       [id]
     );
 
@@ -673,8 +773,7 @@ export const updateProduct = async (id: string, data: any) => {
     if (data.variants !== undefined) {
       normalizedVariants = normalizeVariantInputs(
         data.variants,
-        data.price ?? current.rows[0].price,
-        data.stock ?? current.rows[0].stock
+        data.price ?? current.rows[0].price
       );
     }
 
@@ -682,12 +781,7 @@ export const updateProduct = async (id: string, data: any) => {
     const lowestVariant = activeVariants.reduce((lowest, variant) => (
       !lowest || variant.price < lowest.price ? variant : lowest
     ), undefined as (typeof activeVariants)[number] | undefined);
-    const totalVariantStock = activeVariants.length
-      ? activeVariants.reduce((sum, variant) => sum + variant.stock, 0)
-      : undefined;
-
     const nextPrice = data.price ?? lowestVariant?.price ?? current.rows[0].price;
-    const nextStock = data.stock ?? totalVariantStock;
     const discount = calculateProductDiscount(
       nextPrice,
       data.discount_enabled ?? current.rows[0].discount_enabled,
@@ -704,19 +798,15 @@ export const updateProduct = async (id: string, data: any) => {
         image_public_id=COALESCE($6, image_public_id),
         image_urls=COALESCE($7, image_urls),
         image_public_ids=COALESCE($8, image_public_ids),
-        stock=COALESCE($9, stock),
-        installment_enabled=COALESCE($10, installment_enabled),
-        minimum_deposit_percentage=COALESCE($11, minimum_deposit_percentage),
-        installment_duration_months=COALESCE($12, installment_duration_months),
-        fine_percentage_on_default=COALESCE($13, fine_percentage_on_default),
-        minimum_wallet_balance_required=COALESCE($14, minimum_wallet_balance_required),
-        grace_period_days=COALESCE($15, grace_period_days),
-        discount_enabled=$16,
-        discount_percentage=$17,
-        discount_amount=$18,
-        discounted_price=$19,
+        installment_enabled=COALESCE($9, installment_enabled),
+        minimum_deposit_percentage=COALESCE($10, minimum_deposit_percentage),
+        installment_duration_months=COALESCE($11, installment_duration_months),
+        discount_enabled=$12,
+        discount_percentage=$13,
+        discount_amount=$14,
+        discounted_price=$15,
         updated_at=NOW()
-    WHERE id=$20
+    WHERE id=$16
     RETURNING ${productSelectColumns}
     `;
 
@@ -729,13 +819,9 @@ export const updateProduct = async (id: string, data: any) => {
       data.image_public_id,
       data.image_urls,
       data.image_public_ids,
-      nextStock,
       data.installment_enabled,
       data.minimum_deposit_percentage,
       data.installment_duration_months,
-      data.fine_percentage_on_default,
-      data.minimum_wallet_balance_required,
-      data.grace_period_days,
       discount.discount_enabled,
       discount.discount_percentage,
       discount.discount_amount,
@@ -743,16 +829,77 @@ export const updateProduct = async (id: string, data: any) => {
       id
     ];
 
-    const result = await client.query(query, values);
+    await client.query(query, values);
 
     if (normalizedVariants) {
       await replaceVariants(client, id, normalizedVariants);
     }
 
+    await setProductDisplayOrder(client, id, data.display_order);
+    const productResult = await client.query(
+      `SELECT ${productSelectColumns} FROM products WHERE id=$1`,
+      [id]
+    );
+
     await client.query("COMMIT");
 
-    const [product] = await attachVariants([result.rows[0]], true);
+    const [product] = await attachVariants([productResult.rows[0]], true);
     return product;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+export const reorderHomepageProducts = async (productIds: string[]) => {
+  await ensureProductColumns();
+
+  if (!Array.isArray(productIds)) {
+    throw new Error("product_ids must be an array");
+  }
+
+  const normalizedIds = productIds.map((id) => (
+    typeof id === "string" ? id.trim() : ""
+  ));
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+  if (normalizedIds.some((id) => !uuidPattern.test(id))) {
+    throw new Error("product_ids must contain valid product ids");
+  }
+
+  const uniqueIds = new Set(normalizedIds);
+  if (uniqueIds.size !== normalizedIds.length) {
+    throw new Error("product_ids must not contain duplicates");
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    await client.query("LOCK TABLE products IN SHARE ROW EXCLUSIVE MODE");
+
+    if (normalizedIds.length) {
+      const activeProducts = await client.query(
+        `
+        SELECT id
+        FROM products
+        WHERE is_active = TRUE
+          AND id = ANY($1::UUID[])
+        `,
+        [normalizedIds]
+      );
+
+      if (activeProducts.rows.length !== normalizedIds.length) {
+        throw new Error("All product_ids must be active products");
+      }
+    }
+
+    await rewriteActiveProductDisplayOrder(client, normalizedIds);
+    await client.query("COMMIT");
+
+    return getAllProducts();
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -780,16 +927,13 @@ export const getActiveProducts = async () => {
            END AS effective_price,
            ${productImageUrlSelect},
            ${productImageUrlsSelect},
-           stock,
            installment_enabled,
            minimum_deposit_percentage,
            installment_duration_months,
-           fine_percentage_on_default,
-           minimum_wallet_balance_required,
-           grace_period_days
+           display_order
     FROM products
     WHERE is_active = true
-    ORDER BY created_at DESC
+    ORDER BY ${homepageProductOrderClause}
   `);
 
   return attachVariants(result.rows);
@@ -820,13 +964,10 @@ export const getActiveProductsByCategory = async (category: string) => {
            END AS effective_price,
            ${productImageUrlSelect},
            ${productImageUrlsSelect},
-           stock,
            installment_enabled,
            minimum_deposit_percentage,
            installment_duration_months,
-           fine_percentage_on_default,
-           minimum_wallet_balance_required,
-           grace_period_days
+           display_order
     FROM products
     WHERE is_active = true
       AND LOWER(category) = LOWER($1)

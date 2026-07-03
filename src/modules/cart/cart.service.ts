@@ -23,7 +23,6 @@ const resolveProductVariant = async (
       p.is_active AS product_is_active,
       pv.id AS variant_id,
       pv.name AS variant_name,
-      pv.stock,
       pv.is_active AS variant_is_active
     FROM products p
     JOIN product_variants pv ON pv.product_id = p.id
@@ -57,10 +56,6 @@ export const addToCart = async (
 
   const variant = await resolveProductVariant(productId, variantId);
 
-  if (Number(variant.stock) < requestedQuantity) {
-    throw new Error("Insufficient stock");
-  }
-
   let cart = await pool.query(
     `SELECT id FROM carts WHERE user_id=$1`,
     [userId]
@@ -85,10 +80,6 @@ export const addToCart = async (
 
   if (existing.rows[0]) {
     const newQty = Number(existing.rows[0].quantity) + requestedQuantity;
-
-    if (Number(variant.stock) < newQty) {
-      throw new Error("Insufficient stock");
-    }
 
     const updated = await pool.query(
       `UPDATE cart_items
@@ -144,9 +135,7 @@ export const getCart = async (userId: string) => {
       products.image_urls,
       products.installment_enabled,
       products.installment_duration_months,
-      products.minimum_deposit_percentage,
-      products.minimum_wallet_balance_required,
-      pv.stock
+      products.minimum_deposit_percentage
     FROM carts
     JOIN cart_items ON carts.id = cart_items.cart_id
     JOIN products ON products.id = cart_items.product_id
@@ -182,9 +171,8 @@ export const updateCartItemQuantity = async (
 
   const item = await pool.query(
     `
-    SELECT cart_items.id, pv.stock
+    SELECT cart_items.id
     FROM cart_items
-    JOIN product_variants pv ON pv.id = cart_items.variant_id
     WHERE cart_items.id=$1
     `,
     [itemId]
@@ -192,10 +180,6 @@ export const updateCartItemQuantity = async (
 
   if (!item.rows[0]) {
     throw new Error("Cart item not found");
-  }
-
-  if (Number(item.rows[0].stock) < quantity) {
-    throw new Error("Insufficient stock");
   }
 
   const updated = await pool.query(
