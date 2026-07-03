@@ -14,6 +14,23 @@ type ProductVariantInput = {
   is_active?: boolean;
 };
 
+type ProductSpecificationItemInput = {
+  key?: unknown;
+  name?: unknown;
+  label?: unknown;
+  feature?: unknown;
+  value?: unknown;
+};
+
+type ProductSpecificationSectionInput = {
+  section?: unknown;
+  title?: unknown;
+  name?: unknown;
+  items?: unknown;
+  specifications?: unknown;
+  specs?: unknown;
+};
+
 const roundMoney = (value: number) => Math.round(value * 100) / 100;
 
 export const calculateProductDiscount = (
@@ -71,6 +88,7 @@ export const ensureProductColumns = async () => {
         ADD COLUMN IF NOT EXISTS discount_percentage NUMERIC(5,2) DEFAULT 0,
         ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(15,2) DEFAULT 0,
         ADD COLUMN IF NOT EXISTS discounted_price NUMERIC(15,2),
+        ADD COLUMN IF NOT EXISTS specifications JSONB DEFAULT '[]'::JSONB,
         ADD COLUMN IF NOT EXISTS installment_enabled BOOLEAN DEFAULT FALSE,
         ADD COLUMN IF NOT EXISTS minimum_deposit_percentage INTEGER DEFAULT 50,
         ADD COLUMN IF NOT EXISTS installment_duration_months INTEGER,
@@ -86,6 +104,7 @@ export const ensureProductColumns = async () => {
       await pool.query(`
         UPDATE products
         SET
+          specifications = COALESCE(specifications, '[]'::JSONB),
           discount_enabled = COALESCE(discount_enabled, FALSE),
           discount_percentage = CASE
             WHEN COALESCE(discount_enabled, FALSE) THEN COALESCE(discount_percentage, 0)
@@ -103,6 +122,7 @@ export const ensureProductColumns = async () => {
            OR discount_amount IS NULL
            OR discount_percentage IS NULL
            OR discount_enabled IS NULL
+           OR specifications IS NULL
       `);
 
       await pool.query(`
@@ -143,15 +163,9 @@ export const ensureProductColumns = async () => {
 
       await pool.query(`
         ALTER TABLE products
-        DROP COLUMN IF EXISTS stock,
         DROP COLUMN IF EXISTS fine_percentage_on_default,
         DROP COLUMN IF EXISTS minimum_wallet_balance_required,
         DROP COLUMN IF EXISTS grace_period_days
-      `);
-
-      await pool.query(`
-        ALTER TABLE product_variants
-        DROP COLUMN IF EXISTS stock
       `);
 
       await pool.query(`
@@ -224,6 +238,7 @@ const productSelectColumns = `
   id,
   name,
   description,
+  COALESCE(specifications, '[]'::JSONB) AS specifications,
   category,
   price,
   COALESCE(discount_enabled, FALSE) AS discount_enabled,
@@ -246,6 +261,67 @@ const productSelectColumns = `
   created_at,
   updated_at
 `;
+
+const normalizeSpecificationValue = (value: unknown) => {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  }
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "boolean") return value;
+
+  return String(value).trim() || null;
+};
+
+const normalizeSpecificationItem = (item: ProductSpecificationItemInput) => {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+
+  const keySource = item.key ?? item.name ?? item.label ?? item.feature;
+  const key = typeof keySource === "string" ? keySource.trim() : "";
+  const value = normalizeSpecificationValue(item.value);
+
+  if (!key || value === null) return null;
+
+  return { key, value };
+};
+
+const normalizeProductSpecifications = (input: unknown) => {
+  if (input === undefined) return undefined;
+  if (input === null || input === "") return [];
+
+  if (!Array.isArray(input)) {
+    throw new Error("specifications must be an array of sections");
+  }
+
+  return input
+    .map((sectionInput) => {
+      if (!sectionInput || typeof sectionInput !== "object" || Array.isArray(sectionInput)) {
+        return null;
+      }
+
+      const section = sectionInput as ProductSpecificationSectionInput;
+      const sectionSource = section.section ?? section.title ?? section.name;
+      const sectionName = typeof sectionSource === "string" ? sectionSource.trim() : "";
+      const rawItems = section.items ?? section.specifications ?? section.specs;
+
+      if (!Array.isArray(rawItems)) {
+        throw new Error("specification section items must be an array");
+      }
+
+      const items = rawItems
+        .map((item) => normalizeSpecificationItem(item as ProductSpecificationItemInput))
+        .filter((item): item is { key: string; value: string | number | boolean } => item !== null);
+
+      if (!sectionName && !items.length) return null;
+      if (!sectionName) {
+        throw new Error("specification section name is required");
+      }
+
+      return { section: sectionName, items };
+    })
+    .filter((section): section is { section: string; items: { key: string; value: string | number | boolean }[] } => section !== null);
+};
 
 const variantSelectColumns = `
   pv.id,
@@ -620,19 +696,21 @@ export const createProduct = async (data: any) => {
 
     const query = `
     INSERT INTO products
-  (name, description, category, price, image_url, image_public_id,
+  (name, description, specifications, category, price, image_url, image_public_id,
    image_urls, image_public_ids,
    installment_enabled, minimum_deposit_percentage,
    installment_duration_months,
    discount_enabled, discount_percentage, discount_amount, discounted_price)
     VALUES
-    ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+    ($1,$2,$3::JSONB,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
     RETURNING ${productSelectColumns}
     `;
 
+    const specifications = normalizeProductSpecifications(data.specifications) ?? [];
     const values = [
       data.name,
       data.description,
+      JSON.stringify(specifications),
       data.category,
       discount.price,
       data.image_url,
@@ -732,6 +810,7 @@ export const updateProduct = async (id: string, data: any) => {
   const hasAnyUpdateField = [
     "name",
     "description",
+    "specifications",
     "category",
     "price",
     "image_url",
@@ -792,27 +871,30 @@ export const updateProduct = async (id: string, data: any) => {
     UPDATE products
     SET name=COALESCE($1, name),
         description=COALESCE($2, description),
-        category=COALESCE($3, category),
-        price=COALESCE($4, price),
-        image_url=COALESCE($5, image_url),
-        image_public_id=COALESCE($6, image_public_id),
-        image_urls=COALESCE($7, image_urls),
-        image_public_ids=COALESCE($8, image_public_ids),
-        installment_enabled=COALESCE($9, installment_enabled),
-        minimum_deposit_percentage=COALESCE($10, minimum_deposit_percentage),
-        installment_duration_months=COALESCE($11, installment_duration_months),
-        discount_enabled=$12,
-        discount_percentage=$13,
-        discount_amount=$14,
-        discounted_price=$15,
+        specifications=COALESCE($3::JSONB, specifications),
+        category=COALESCE($4, category),
+        price=COALESCE($5, price),
+        image_url=COALESCE($6, image_url),
+        image_public_id=COALESCE($7, image_public_id),
+        image_urls=COALESCE($8, image_urls),
+        image_public_ids=COALESCE($9, image_public_ids),
+        installment_enabled=COALESCE($10, installment_enabled),
+        minimum_deposit_percentage=COALESCE($11, minimum_deposit_percentage),
+        installment_duration_months=COALESCE($12, installment_duration_months),
+        discount_enabled=$13,
+        discount_percentage=$14,
+        discount_amount=$15,
+        discounted_price=$16,
         updated_at=NOW()
-    WHERE id=$16
+    WHERE id=$17
     RETURNING ${productSelectColumns}
     `;
 
+    const specifications = normalizeProductSpecifications(data.specifications);
     const values = [
       data.name,
       data.description,
+      specifications === undefined ? null : JSON.stringify(specifications),
       data.category,
       nextPrice,
       data.image_url,
@@ -915,6 +997,7 @@ export const getActiveProducts = async () => {
     SELECT id,
            name,
            description,
+           COALESCE(specifications, '[]'::JSONB) AS specifications,
            category,
            price,
            COALESCE(discount_enabled, FALSE) AS discount_enabled,
@@ -952,6 +1035,7 @@ export const getActiveProductsByCategory = async (category: string) => {
     SELECT id,
            name,
            description,
+           COALESCE(specifications, '[]'::JSONB) AS specifications,
            category,
            price,
            COALESCE(discount_enabled, FALSE) AS discount_enabled,

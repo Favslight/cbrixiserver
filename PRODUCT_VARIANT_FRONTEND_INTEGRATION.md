@@ -6,7 +6,7 @@ The backend now supports one product with many `variants`. The frontend should n
 
 ## Backend Rule
 
-- `products` stores the shared product data: name, description, category, images, installment settings, and discount settings.
+- `products` stores the shared product data: name, rich marketing description, structured product specifications, category, images, installment settings, and discount settings.
 - `product_variants` stores selectable specs: variant name/specs, price, SKU, active state, and display order.
 - Discount is product-level, but the backend calculates discount fields per variant using each variant price.
 - Installment is product-level, but first deposit/monthly schedule must be calculated from the selected variant `effective_price`.
@@ -38,6 +38,8 @@ type ProductVariant = {
 type AdminProduct = {
   id: string;
   name: string;
+  description?: string | null;
+  specifications: ProductSpecificationSection[];
   price: string | number; // lowest active variant price when variants exist
   effective_price: string | number; // lowest active variant effective price
   has_variants: boolean;
@@ -45,6 +47,14 @@ type AdminProduct = {
   variant_price_min?: string | number;
   variant_price_max?: string | number;
   variants: ProductVariant[];
+};
+
+type ProductSpecificationSection = {
+  section: string;
+  items: Array<{
+    key: string;
+    value: string | number | boolean;
+  }>;
 };
 ```
 
@@ -77,6 +87,7 @@ const variants = [
 const form = new FormData();
 form.append("name", name);
 form.append("description", description);
+form.append("specifications", JSON.stringify(specifications));
 form.append("category", category);
 form.append("variants", JSON.stringify(variants));
 

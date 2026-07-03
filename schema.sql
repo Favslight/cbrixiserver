@@ -29,6 +29,7 @@ CREATE TABLE products (
     discount_percentage NUMERIC(5,2) DEFAULT 0,
     discount_amount NUMERIC(15,2) DEFAULT 0,
     discounted_price NUMERIC(15,2),
+    specifications JSONB DEFAULT '[]'::JSONB,
     image_url TEXT,
     image_public_id TEXT,
     image_urls TEXT[] DEFAULT ARRAY[]::TEXT[],
@@ -313,6 +314,7 @@ ADD COLUMN IF NOT EXISTS discount_enabled BOOLEAN DEFAULT FALSE,
 ADD COLUMN IF NOT EXISTS discount_percentage NUMERIC(5,2) DEFAULT 0,
 ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(15,2) DEFAULT 0,
 ADD COLUMN IF NOT EXISTS discounted_price NUMERIC(15,2),
+ADD COLUMN IF NOT EXISTS specifications JSONB DEFAULT '[]'::JSONB,
 ADD COLUMN IF NOT EXISTS installment_enabled BOOLEAN DEFAULT FALSE,
 ADD COLUMN IF NOT EXISTS minimum_deposit_percentage INTEGER DEFAULT 50,
 ADD COLUMN IF NOT EXISTS installment_duration_months INTEGER,
@@ -337,6 +339,10 @@ WHERE discounted_price IS NULL
    OR discount_amount IS NULL
    OR discount_percentage IS NULL
    OR discount_enabled IS NULL;
+
+UPDATE products
+SET specifications = '[]'::JSONB
+WHERE specifications IS NULL;
 
 CREATE TABLE IF NOT EXISTS product_variants (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -369,13 +375,9 @@ WHERE NOT EXISTS (
 );
 
 ALTER TABLE products
-DROP COLUMN IF EXISTS stock,
 DROP COLUMN IF EXISTS fine_percentage_on_default,
 DROP COLUMN IF EXISTS minimum_wallet_balance_required,
 DROP COLUMN IF EXISTS grace_period_days;
-
-ALTER TABLE product_variants
-DROP COLUMN IF EXISTS stock;
 
 CREATE INDEX IF NOT EXISTS idx_product_variants_product_id
 ON product_variants(product_id);

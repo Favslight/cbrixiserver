@@ -18,6 +18,7 @@ type Product = {
   id: string;
   name: string;
   description?: string | null;
+  specifications: ProductSpecificationSection[];
   category?: string | null;
   price: string | number;
   discount_enabled: boolean;
@@ -36,6 +37,16 @@ type Product = {
   variant_price_min?: string | number;
   variant_price_max?: string | number;
   variants: ProductVariant[];
+};
+
+type ProductSpecificationSection = {
+  section: string; // admin-created, for example "Display"; do not hardcode section names
+  items: ProductSpecificationItem[];
+};
+
+type ProductSpecificationItem = {
+  key: string; // feature name, for example "Display Size"
+  value: string | number | boolean; // feature value, for example "6.78-inch"
 };
 
 type ProductVariant = {
@@ -96,7 +107,8 @@ if (displayPosition !== undefined && displayPosition !== null) {
   form.append("display_order", String(displayPosition));
 }
 form.append("category", category);
-form.append("description", description); // raw textarea value, newlines preserved
+form.append("description", description); // rich marketing content
+form.append("specifications", JSON.stringify(specifications)); // structured specs table data
 form.append("variants", JSON.stringify(variants)); // see PRODUCT_VARIANT_FRONTEND_INTEGRATION.md
 
 form.append("installment_enabled", String(installmentEnabled));
@@ -110,6 +122,83 @@ orderedFiles.forEach((file) => form.append("images", file));
 ```
 
 For edits, `PUT /admin/products/:id` accepts the same installment fields and `display_order` in multipart or JSON. Send `display_order: null` in JSON to remove a product from the manually ordered homepage group.
+
+## Product Specifications
+
+`description` and `specifications` are separate fields.
+
+- Use `description` for rich marketing content: paragraphs, highlights, formatted copy, and product story content.
+- Use `specifications` for structured technical rows. Do not ask admins to type one long specification paragraph.
+- Do not hardcode sections like General, Display, Camera, or Battery. They are examples only; the admin creates section names dynamically.
+- Existing products that only have `description` return `specifications: []`; the frontend should hide the specs tab/table when there are no rows.
+
+Backend storage shape:
+
+```ts
+type ProductSpecificationSection = {
+  section: string;
+  items: Array<{
+    key: string;
+    value: string | number | boolean;
+  }>;
+};
+```
+
+Example admin state:
+
+```ts
+const specifications = [
+  {
+    section: "Display",
+    items: [
+      { key: "Size", value: "6.78-inch" },
+      { key: "Resolution", value: "720 x 1576 pixels" },
+      { key: "Type", value: "IPS LCD, 120Hz" }
+    ]
+  },
+  {
+    section: "Battery",
+    items: [
+      { key: "Capacity", value: "5200mAh" },
+      { key: "Charging", value: "18W wired" }
+    ]
+  }
+];
+```
+
+Admin dynamic-builder rule:
+
+```tsx
+form.append("specifications", JSON.stringify(specifications));
+```
+
+For JSON edits:
+
+```ts
+PUT /admin/products/:id
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{
+  "specifications": [
+    {
+      "section": "Performance",
+      "items": [
+        { "key": "Chipset", "value": "Mediatek Helio G81 Ultimate" },
+        { "key": "CPU", "value": "Octa-core" }
+      ]
+    }
+  ]
+}
+```
+
+Validation rules:
+
+- `specifications` must be an array.
+- Each section must have a non-empty `section`.
+- Each section must have `items` as an array.
+- Empty item keys or empty values are ignored.
+- Send `specifications: []` to clear product specs.
 
 ## Product Display Order
 
@@ -187,11 +276,11 @@ Content-Type: application/json
 
 This endpoint rewrites the homepage order exactly as sent: first ID becomes `display_order = 1`, second becomes `2`, and so on. Active products omitted from `product_ids` are cleared to `display_order = null`, so they appear after manually ordered products by newest first.
 
-## Description Formatting
+## Description Rendering
 
-The backend stores `description` as text and preserves newline characters. The frontend should not collapse the text into one continuous sentence.
+The backend stores `description` separately from specifications. If the admin uses a rich text editor, send the rich text value in `description` and sanitize before rendering on the frontend.
 
-Admin textarea rule:
+Plain textarea fallback:
 
 ```tsx
 <textarea
@@ -217,17 +306,85 @@ Product page rendering:
 }
 ```
 
-If the design needs the photo-style feature rows, ask admin to enter one feature per line, then render each non-empty line separately:
+## Specifications Rendering
+
+Render `product.specifications` in the product details modal/page as a clean table. Use section titles as subheadings and show each feature name on the left with its value on the right.
 
 ```tsx
-const featureLines = (product.description ?? "")
-  .split(/\r?\n/)
-  .map((line) => line.trim())
-  .filter(Boolean);
+const specificationSections = product.specifications ?? [];
+const hasSpecifications = specificationSections.some(
+  (section) => section.items?.length
+);
 
-return featureLines.map((line) => (
-  <div className="feature-row" key={line}>{line}</div>
-));
+return hasSpecifications ? (
+  <section className="product-specifications">
+    {specificationSections.map((section) => (
+      <div className="spec-section" key={section.section}>
+        <h3>{section.section}</h3>
+        <div className="spec-grid">
+          {section.items.map((item) => (
+            <div className="spec-row" key={`${section.section}-${item.key}`}>
+              <span className="spec-key">{item.key}</span>
+              <span className="spec-value">{String(item.value)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    ))}
+  </section>
+) : null;
+```
+
+```css
+.product-specifications {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px 32px;
+}
+
+.spec-section h3 {
+  margin: 0;
+  padding: 0 0 10px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #111827;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.spec-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 38%) minmax(0, 1fr);
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid #e5e7eb;
+  line-height: 1.45;
+}
+
+.spec-key {
+  color: #4b5563;
+  text-align: left;
+}
+
+.spec-value {
+  color: #111827;
+  text-align: right;
+}
+
+@media (max-width: 768px) {
+  .product-specifications {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .spec-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .spec-value {
+    text-align: left;
+  }
+}
 ```
 
 ## Image Rendering

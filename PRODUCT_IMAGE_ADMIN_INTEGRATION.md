@@ -18,6 +18,7 @@ type AdminProduct = {
   id: string;
   name: string;
   description?: string | null;
+  specifications: ProductSpecificationSection[];
   category?: string | null;
   price: string | number; // original normal price
   discount_enabled: boolean;
@@ -35,6 +36,14 @@ type AdminProduct = {
   has_variants: boolean;
   default_variant_id?: string | null;
   variants: ProductVariant[];
+};
+
+type ProductSpecificationSection = {
+  section: string;
+  items: Array<{
+    key: string;
+    value: string | number | boolean;
+  }>;
 };
 
 type ProductVariant = {
@@ -62,6 +71,7 @@ Fields:
 name: string;
 price: string;
 description?: string;
+specifications?: string; // JSON array; see PRODUCT_DETAIL_FRONTEND_INTEGRATION.md
 category?: string;
 installment_enabled?: "true" | "false";
 minimum_deposit_percentage?: string; // example "30"; do not hardcode on frontend
@@ -79,7 +89,8 @@ Example:
 const form = new FormData();
 form.append("name", name);
 form.append("price", String(price));
-form.append("description", description); // keep textarea newlines as entered
+form.append("description", description); // rich marketing content
+form.append("specifications", JSON.stringify(specifications));
 form.append("variants", JSON.stringify(variants));
 form.append("installment_enabled", String(installmentEnabled));
 if (installmentEnabled) {

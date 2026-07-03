@@ -19,6 +19,7 @@ const partnerProductSelect = `
     TRIM(BOTH '-' FROM REGEXP_REPLACE(p.name, '[^a-zA-Z0-9]+', '-', 'g'))
   ) AS slug,
   p.description,
+  COALESCE(p.specifications, '[]'::JSONB) AS specifications,
   p.category,
   p.price::FLOAT8 AS price,
   COALESCE(p.discount_enabled, FALSE) AS discount_enabled,

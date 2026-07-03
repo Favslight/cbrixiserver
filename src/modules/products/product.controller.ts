@@ -99,6 +99,18 @@ const parseJsonArrayField = <T>(value: string | undefined, fieldName: string) =>
   }
 };
 
+const parseJsonField = <T>(value: string | undefined, fieldName: string) => {
+  if (value === undefined || value === "") {
+    return { provided: false, value: undefined as T | undefined, error: undefined as string | undefined };
+  }
+
+  try {
+    return { provided: true, value: JSON.parse(value) as T, error: undefined };
+  } catch {
+    return { provided: true, value: undefined, error: `${fieldName} must be valid JSON` };
+  }
+};
+
 const derivePriceFromVariants = (
   priceValue: string | undefined,
   variants: any[] | undefined
@@ -258,6 +270,7 @@ export const createProductController = async (
   const name = readFieldValue(fields, "name");
   const priceValue = readFieldValue(fields, "price");
   const description = readFieldValue(fields, "description");
+  const specificationsFieldValue = readFieldValue(fields, "specifications") ?? readFieldValue(fields, "product_specifications");
   const category = readFieldValue(fields, "category");
   const installmentEnabledValue = readFieldValue(fields, "installment_enabled");
   const minDepositValue = readFieldValue(fields, "minimum_deposit_percentage");
@@ -269,6 +282,7 @@ export const createProductController = async (
     readFieldValue(fields, "display_order") ?? readFieldValue(fields, "displayOrder")
   );
   const parsedVariants = parseJsonArrayField<any>(variantsFieldValue, "variants");
+  const parsedSpecifications = parseJsonField<any>(specificationsFieldValue, "specifications");
   const thumbnailIndex = parseOptionalInteger(
     readFieldValue(fields, "thumbnail_index") ?? readFieldValue(fields, "thumbnailIndex")
   );
@@ -276,6 +290,10 @@ export const createProductController = async (
 
   if (parsedVariants.error) {
     return reply.status(400).send({ message: parsedVariants.error });
+  }
+
+  if (parsedSpecifications.error) {
+    return reply.status(400).send({ message: parsedSpecifications.error });
   }
 
   const effectivePriceValue = derivePriceFromVariants(priceValue, parsedVariants.value);
@@ -332,6 +350,7 @@ export const createProductController = async (
   const productData = {
     name,
     description,
+    specifications: parsedSpecifications.value,
     category,
     price,
     ...imagePayload,
@@ -352,6 +371,9 @@ export const createProductController = async (
       error?.message === "variant price must be a valid non-negative number"
       || error?.message === "At least one active product variant is required"
       || error?.message === "price must be a valid non-negative number"
+      || error?.message === "specifications must be an array of sections"
+      || error?.message === "specification section name is required"
+      || error?.message === "specification section items must be an array"
       || error?.message === "discount_percentage must be greater than 0 and less than or equal to 100 when discount is active"
       || error?.message === "display_order must be a positive integer or null"
     ) {
@@ -440,6 +462,8 @@ export const updateProductController = async (
 
     let name: string | undefined;
     let description: string | undefined;
+    let specifications: any;
+    let specificationsProvided = false;
     let category: string | undefined;
     let priceValue: string | undefined;
     let installmentEnabledValue: string | undefined;
@@ -485,6 +509,13 @@ export const updateProductController = async (
 
       name = readFieldValue(fields, "name");
       description = readFieldValue(fields, "description");
+      const specificationsValue = readFieldValue(fields, "specifications") ?? readFieldValue(fields, "product_specifications");
+      const parsedSpecifications = parseJsonField<any>(specificationsValue, "specifications");
+      if (parsedSpecifications.error) {
+        return reply.status(400).send({ message: parsedSpecifications.error });
+      }
+      specificationsProvided = parsedSpecifications.provided;
+      specifications = parsedSpecifications.value;
       category = readFieldValue(fields, "category");
       priceValue = readFieldValue(fields, "price");
       installmentEnabledValue = readFieldValue(fields, "installment_enabled") ?? readFieldValue(fields, "installmentEnabled");
@@ -519,6 +550,10 @@ export const updateProductController = async (
       const body = (req.body ?? {}) as Record<string, unknown>;
       name = typeof body.name === "string" ? body.name : undefined;
       description = typeof body.description === "string" ? body.description : undefined;
+      if (body.specifications !== undefined || body.product_specifications !== undefined) {
+        specificationsProvided = true;
+        specifications = body.specifications !== undefined ? body.specifications : body.product_specifications;
+      }
       category = typeof body.category === "string" ? body.category : undefined;
       priceValue = body.price !== undefined ? String(body.price) : undefined;
       installmentEnabledValue = body.installment_enabled !== undefined
@@ -629,6 +664,7 @@ export const updateProductController = async (
     const updateData: any = {
       name,
       description,
+      specifications: specificationsProvided ? specifications : undefined,
       category,
       price: parsedPrice,
       variants: variantsProvided ? variants : undefined,
@@ -693,6 +729,9 @@ export const updateProductController = async (
       || error?.message === "discount_percentage must be greater than 0 and less than or equal to 100 when discount is active"
       || error?.message === "variant price must be a valid non-negative number"
       || error?.message === "At least one active product variant is required"
+      || error?.message === "specifications must be an array of sections"
+      || error?.message === "specification section name is required"
+      || error?.message === "specification section items must be an array"
       || error?.message === "display_order must be a positive integer or null"
     ) {
       return reply.status(400).send({ message: error.message });
