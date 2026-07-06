@@ -10,6 +10,12 @@ import {
   markUserCbrillianceEmailVerified,
   normalizeCbrillianceEmail
 } from "../users/cbrillianceVerification.service";
+import {
+  getAdminOrderItems,
+  getOrderItemSummary,
+  withAdminOrderItemDetailsList,
+  withAdminUserDisplayFields
+} from "./admin.orderDetails";
 
 const paymentListQuery = `
   SELECT
@@ -83,7 +89,34 @@ const sendPaymentsByStatus = async (
     [status]
   );
 
-  return reply.send(result.rows);
+  const payments = await Promise.all(
+    result.rows.map(async (payment) => {
+      const orderItems = await getAdminOrderItems(payment.order_id);
+      const orderSummary = getOrderItemSummary(orderItems);
+      const paymentWithUser = withAdminUserDisplayFields(payment);
+
+      return {
+        ...paymentWithUser,
+        ...orderSummary,
+        order_items: orderItems,
+        order: {
+          id: payment.order_id,
+          user_id: payment.user_id,
+          payment_mode: payment.payment_mode,
+          total_amount: payment.total_amount,
+          deposit_amount: payment.deposit_amount,
+          paid_amount: payment.paid_amount,
+          remaining_balance: payment.remaining_balance,
+          status: payment.order_status,
+          external_email: payment.external_email,
+          ...orderSummary,
+          order_items: orderItems
+        }
+      };
+    })
+  );
+
+  return reply.send(payments);
 };
 
 export const getPendingPayments = async (
@@ -119,7 +152,11 @@ export const getPendingOrders = async (
   ORDER BY o.created_at DESC
   `);
 
-  return reply.send(result.rows);
+  const orders = await withAdminOrderItemDetailsList(
+    result.rows.map((order) => withAdminUserDisplayFields(order))
+  );
+
+  return reply.send(orders);
 };
 
 export const getApprovedOrders = async (
@@ -135,7 +172,11 @@ export const getApprovedOrders = async (
   ORDER BY o.created_at DESC
   `);
 
-  return reply.send(result.rows);
+  const orders = await withAdminOrderItemDetailsList(
+    result.rows.map((order) => withAdminUserDisplayFields(order))
+  );
+
+  return reply.send(orders);
 };
 
 export const getRejectedOrders = async (
@@ -150,7 +191,11 @@ export const getRejectedOrders = async (
   ORDER BY o.created_at DESC
   `);
 
-  return reply.send(result.rows);
+  const orders = await withAdminOrderItemDetailsList(
+    result.rows.map((order) => withAdminUserDisplayFields(order))
+  );
+
+  return reply.send(orders);
 };
 
 export const approveOrder = async (

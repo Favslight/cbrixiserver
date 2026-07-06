@@ -3,6 +3,11 @@ import { adminLoginService } from "./admin.service";
 import { pool } from "../../config/db";
 import { ensureCbrillianceVerificationColumns } from "../users/cbrillianceVerification.service";
 import { ensureProductColumns } from "../products/product.service";
+import {
+  getAdminOrderItems,
+  getOrderItemSummary,
+  withAdminUserDisplayFields
+} from "./admin.orderDetails";
 
 interface AdminLoginBody {
   email: string;
@@ -44,6 +49,7 @@ export const getAllUsersDetailsController = async (
         id,
         firstname,
         lastname,
+        username,
         email,
         cbrilliance_email,
         cbrilliance_email_verified,
@@ -76,30 +82,8 @@ export const getAllUsersDetailsController = async (
 
       const detailedOrders = [];
       for (const order of orders) {
-        const itemsRes = await pool.query(
-          `SELECT
-             order_items.*,
-             COALESCE(order_items.product_name_snapshot, products.name) AS name,
-             COALESCE(order_items.variant_name_snapshot, pv.name) AS variant_name,
-             COALESCE(order_items.variant_specs_snapshot, pv.specs, '{}'::JSONB) AS variant_specs,
-             pv.sku AS variant_sku,
-             COALESCE(order_items.price_at_purchase, pv.price, products.price) AS price,
-             COALESCE(products.discount_enabled, FALSE) AS discount_enabled,
-             COALESCE(products.discount_percentage, 0) AS discount_percentage,
-             CASE
-               WHEN COALESCE(products.discount_enabled, FALSE) THEN ROUND((COALESCE(order_items.price_at_purchase, pv.price, products.price) * COALESCE(products.discount_percentage, 0)) / 100, 2)
-               ELSE 0
-             END AS discount_amount,
-             order_items.price_at_purchase AS discounted_price,
-             order_items.price_at_purchase AS effective_price,
-             products.installment_duration_months
-           FROM order_items
-           JOIN products ON products.id = order_items.product_id
-           LEFT JOIN product_variants pv ON pv.id = order_items.variant_id
-           WHERE order_items.order_id=$1`,
-          [order.id]
-        );
-        const orderItems = itemsRes.rows;
+        const orderItems = await getAdminOrderItems(order.id);
+        const orderItemSummary = getOrderItemSummary(orderItems);
 
         const installmentsRes = await pool.query(
           `SELECT * FROM installments WHERE order_id=$1 ORDER BY installment_number ASC`,
@@ -184,6 +168,7 @@ export const getAllUsersDetailsController = async (
 
         detailedOrders.push({
           ...order,
+          ...orderItemSummary,
           remaining_balance: remainingBalance,
           paid_amount: paidAmount,
           payment_progress_percentage: totalAmount > 0 ? Math.round((paidAmount / totalAmount) * 100) : 0,
@@ -206,7 +191,7 @@ export const getAllUsersDetailsController = async (
       }
 
       usersWithDetails.push({
-        ...user,
+        ...withAdminUserDisplayFields(user),
         orders: detailedOrders
       });
     }
