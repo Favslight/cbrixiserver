@@ -6,6 +6,7 @@ import { EmailType } from "../email/email.types";
 import { generateInvoiceNumber } from "./invoice.service";
 import { initializePaystackPayment, verifyPaystackPayment } from "./paystack.service";
 import { recordReferralRewardForTransaction } from "../referrals/referral.service";
+import { notifyStaffOfPayment } from "../admin-notifications/adminNotification.service";
 
 export const initiatePaystackPayment = async (
   user: any,
@@ -137,6 +138,21 @@ export const initiateManualTransfer = async (
   EmailType.BANK_TRANSFER_INVOICE
 );
 
+  const txnRes = await pool.query(
+    `SELECT id FROM payment_transactions WHERE reference = $1`,
+    [reference]
+  );
+
+  await notifyStaffOfPayment({
+    orderId,
+    transactionId: txnRes.rows[0]?.id ?? reference,
+    customerName: currentUser.firstname ?? "Customer",
+    customerEmail: currentUser.email,
+    amount: payableAmount,
+    paymentMethod: "BANK_TRANSFER",
+    status: "PENDING"
+  });
+
   return {
     reference,
     bank_name: process.env.BANK_NAME,
@@ -259,7 +275,7 @@ const resolvePayableAmount = async (
 
 export const sendPaymentSuccessNotification = async (txn: any) => {
   const userRes = await pool.query(
-    `SELECT id, email, firstname FROM users WHERE id=$1`,
+    `SELECT id, email, firstname, lastname FROM users WHERE id=$1`,
     [txn.user_id]
   );
 
@@ -276,4 +292,14 @@ export const sendPaymentSuccessNotification = async (txn: any) => {
     paymentSuccessTemplate(user.firstname ?? "Customer", Number(txn.amount)),
     EmailType.PAYMENT_SUCCESS
   );
+
+  await notifyStaffOfPayment({
+    orderId: txn.order_id,
+    transactionId: txn.id,
+    customerName: `${user.firstname ?? ""} ${user.lastname ?? ""}`.trim() || user.email,
+    customerEmail: user.email,
+    amount: Number(txn.amount),
+    paymentMethod: txn.payment_method ?? "PAYMENT",
+    status: "SUCCESS"
+  });
 };

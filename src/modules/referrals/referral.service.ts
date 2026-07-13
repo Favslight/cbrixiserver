@@ -303,7 +303,21 @@ export const recordReferralRewardForTransaction = async (transactionId: string) 
   return reward;
 };
 
-export const getMyReferralDashboard = async (userId: string) => {
+type ReferralDashboardOptions = {
+  limit?: number;
+  offset?: number;
+};
+
+const normalizePagination = (options?: ReferralDashboardOptions) => {
+  const limit = Math.min(Math.max(Number(options?.limit ?? 20), 1), 100);
+  const offset = Math.max(Number(options?.offset ?? 0), 0);
+  return { limit, offset };
+};
+
+export const getMyReferralDashboard = async (
+  userId: string,
+  options?: ReferralDashboardOptions
+) => {
   await ensureReferralSchema();
 
   const userRes = await pool.query(
@@ -342,6 +356,18 @@ export const getMyReferralDashboard = async (userId: string) => {
     [userId]
   );
 
+  const { limit, offset } = normalizePagination(options);
+
+  const referredCountRes = await pool.query(
+    `
+    SELECT COUNT(*)::INT AS total
+    FROM users referred
+    WHERE referred.referred_by_user_id = $1
+    `,
+    [userId]
+  );
+  const totalReferred = Number(referredCountRes.rows[0]?.total ?? 0);
+
   const referredUsersRes = await pool.query(
     `
     SELECT
@@ -361,8 +387,9 @@ export const getMyReferralDashboard = async (userId: string) => {
     WHERE referred.referred_by_user_id = $1
     GROUP BY referred.id
     ORDER BY referred.created_at DESC
+    LIMIT $2 OFFSET $3
     `,
-    [userId]
+    [userId, limit, offset]
   );
 
   const rewardsRes = await pool.query(
@@ -400,15 +427,32 @@ export const getMyReferralDashboard = async (userId: string) => {
     },
     referral_code: referralCode,
     referral_link: referralLink,
-    referral_count: Number(user.referral_count ?? referredUsersRes.rows.length),
+    referral_count: Number(user.referral_count ?? totalReferred),
     stats: {
-      total_referred: referredUsersRes.rows.length,
+      total_referred: totalReferred,
       total_earned: Number(totalsRes.rows[0]?.total_earned ?? 0),
       available_balance: Number(totalsRes.rows[0]?.available_balance ?? 0),
       pending_payout_balance: Number(totalsRes.rows[0]?.pending_payout_balance ?? 0),
       paid_out_balance: Number(totalsRes.rows[0]?.paid_out_balance ?? 0)
     },
-    referred_users: referredUsersRes.rows,
+    referred_users: referredUsersRes.rows.map((friend) => ({
+      id: friend.id,
+      firstname: friend.firstname,
+      lastname: friend.lastname,
+      name: `${friend.firstname ?? ""} ${friend.lastname ?? ""}`.trim() || friend.email,
+      email: friend.email,
+      created_at: friend.created_at,
+      total_purchase_amount: Number(friend.total_purchase_amount ?? 0),
+      total_reward_amount: Number(friend.total_reward_amount ?? 0),
+      available_reward_amount: Number(friend.available_reward_amount ?? 0),
+      reward_count: Number(friend.reward_count ?? 0)
+    })),
+    referred_users_pagination: {
+      limit,
+      offset,
+      total: totalReferred,
+      has_more: offset + referredUsersRes.rows.length < totalReferred
+    },
     rewards: rewardsRes.rows,
     payout_requests: payoutsRes.rows
   };

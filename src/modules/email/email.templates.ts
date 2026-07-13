@@ -175,3 +175,73 @@ Your referral payout of ${money(amount)} has been approved.
 
 Thank you.
 `;
+
+export const staffNewOrderTemplate = (input: {
+  orderId: string;
+  customerName: string;
+  customerEmail: string;
+  totalAmount: number;
+  depositAmount: number;
+  remainingAmount: number;
+  paymentMode: string;
+  status: string;
+}) => `
+Hello,
+
+A new order has been placed on CBRIXI.
+
+Order ID: ${input.orderId}
+Customer: ${input.customerName}
+Email: ${input.customerEmail}
+Payment mode: ${input.paymentMode}
+Order status: ${input.status}
+Total: ${money(input.totalAmount)}
+Required deposit: ${money(input.depositAmount)}
+Remaining balance: ${money(input.remainingAmount)}
+
+Please review the order in the admin dashboard.
+`;
+
+export const staffPaymentReceivedTemplate = (input: {
+  orderId: string;
+  transactionId: string;
+  customerName: string;
+  customerEmail: string;
+  amount: number;
+  paymentMethod: string;
+}) => `
+Hello,
+
+A payment has been received on CBRIXI.
+
+Order ID: ${input.orderId}
+Transaction ID: ${input.transactionId}
+Customer: ${input.customerName}
+Email: ${input.customerEmail}
+Amount: ${money(input.amount)}
+Payment method: ${input.paymentMethod}
+
+Please review and approve if required.
+`;
+
+export const staffPendingPaymentTemplate = (input: {
+  orderId: string;
+  transactionId: string;
+  customerName: string;
+  customerEmail: string;
+  amount: number;
+  paymentMethod: string;
+}) => `
+Hello,
+
+A pending payment is waiting for review on CBRIXI.
+
+Order ID: ${input.orderId}
+Transaction ID: ${input.transactionId}
+Customer: ${input.customerName}
+Email: ${input.customerEmail}
+Amount: ${money(input.amount)}
+Payment method: ${input.paymentMethod}
+
+Please verify the bank transfer and approve it from the admin dashboard.
+`;

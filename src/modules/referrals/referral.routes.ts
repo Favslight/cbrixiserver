@@ -13,7 +13,11 @@ import {
 
 export const referralRoutes = async (app: FastifyInstance) => {
   app.get("/referrals/me", { preHandler: [requireUser] }, async (req, reply) => {
-    const dashboard = await getMyReferralDashboard(req.user.id);
+    const { limit, offset } = req.query as { limit?: string; offset?: string };
+    const dashboard = await getMyReferralDashboard(req.user.id, {
+      limit: limit === undefined ? undefined : Number(limit),
+      offset: offset === undefined ? undefined : Number(offset)
+    });
     return reply.send({ success: true, referral: dashboard });
   });
 

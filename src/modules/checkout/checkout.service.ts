@@ -1,6 +1,7 @@
 // src/modules/checkout/checkout.service.ts
 import { pool } from "../../config/db";
-import { getCart } from "../cart/cart.service";
+import { clearCart, getCart } from "../cart/cart.service";
+import { notifyStaffOfNewOrder } from "../admin-notifications/adminNotification.service";
 import { sendEmail } from "../email/email.service";
 import { orderCreatedTemplate } from "../email/email.templates";
 import { EmailType } from "../email/email.types";
@@ -77,7 +78,7 @@ export const createOrderFromCart = async (
     : totalAmount;
 
   const installmentBalance = totalAmount - depositAmount;
-  const remainingBalance = totalAmount;
+  const remainingBalance = paymentMode === "INSTALLMENT" ? installmentBalance : 0;
 
   const status = paymentMode === "INSTALLMENT" && !isUsingVerifiedCbrillianceEmail
     ? "AWAITING_APPROVAL"
@@ -150,13 +151,30 @@ export const createOrderFromCart = async (
   EmailType.ORDER_CREATED
 );
 
-  const cartItemIds = cartItems.map(item => item.cart_item_id);
-  await pool.query(
-    `UPDATE cart_items SET status='PENDING_CHECKOUT' WHERE id IN (${cartItemIds.map((_, i) => `$${i + 1}`).join(",")})`,
-    cartItemIds
-  )
+  await clearCart(currentUser.id);
 
-  return {order, cartItems};
+  await notifyStaffOfNewOrder({
+    orderId: order.id,
+    userId: currentUser.id,
+    customerName: `${currentUser.firstname ?? ""} ${currentUser.lastname ?? ""}`.trim() || currentUser.email,
+    customerEmail: currentUser.email,
+    totalAmount: Number(order.total_amount),
+    depositAmount: Number(order.deposit_amount ?? 0),
+    remainingAmount: Number(order.remaining_balance ?? 0),
+    paymentMode: order.payment_mode,
+    status: order.status
+  });
+
+  return {
+    order: {
+      ...order,
+      total_amount: Number(order.total_amount),
+      deposit_amount: Number(order.deposit_amount ?? 0),
+      remaining_balance: Number(order.remaining_balance ?? 0),
+      remaining_amount: Number(order.remaining_balance ?? 0)
+    },
+    cartItems
+  };
 };
 
 export const getUserOrders = async (userId: string) => {

@@ -37,9 +37,14 @@ the frontend should route to the signup page and auto-fill the referral input wi
 ## User Referral Dashboard
 
 ```ts
-GET /referrals/me
+GET /referrals/me?limit=20&offset=0
 Authorization: Bearer <user-token>
 ```
+
+Query params:
+
+- `limit` (default `20`, max `100`)
+- `offset` (default `0`)
 
 Response:
 
@@ -61,7 +66,26 @@ Response:
       "pending_payout_balance": 2500,
       "paid_out_balance": 0
     },
-    "referred_users": [],
+    "referred_users": [
+      {
+        "id": "uuid",
+        "firstname": "John",
+        "lastname": "Doe",
+        "name": "John Doe",
+        "email": "john@example.com",
+        "created_at": "2026-07-01T10:00:00.000Z",
+        "total_purchase_amount": 10000,
+        "total_reward_amount": 500,
+        "available_reward_amount": 500,
+        "reward_count": 2
+      }
+    ],
+    "referred_users_pagination": {
+      "limit": 20,
+      "offset": 0,
+      "total": 3,
+      "has_more": false
+    },
     "rewards": [],
     "payout_requests": []
   }
@@ -73,7 +97,8 @@ Frontend display:
 - Show `referral_code`.
 - Show `referral_link` with copy/share buttons.
 - Show balances from `stats`.
-- Show referred users from `referred_users`.
+- Show invited friends from `referred_users` using `name` and `email`.
+- Paginate friends with `limit` and `offset`; use `referred_users_pagination.has_more` for load more.
 - Show earned reward history from `rewards`.
 - Show payout history from `payout_requests`.
 

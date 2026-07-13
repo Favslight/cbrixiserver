@@ -150,6 +150,18 @@ export const getCart = async (userId: string) => {
   return result.rows;
 };
 
+export const clearCart = async (userId: string) => {
+  const cartRes = await pool.query(
+    `SELECT id FROM carts WHERE user_id = $1`,
+    [userId]
+  );
+
+  const cartId = cartRes.rows[0]?.id;
+  if (!cartId) return;
+
+  await pool.query(`DELETE FROM cart_items WHERE cart_id = $1`, [cartId]);
+};
+
 export const removeCartItem = async (itemId: string) => {
   const result = await pool.query(
     `DELETE FROM cart_items WHERE id=$1 RETURNING *`,
