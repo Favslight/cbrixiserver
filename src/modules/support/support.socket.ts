@@ -5,6 +5,7 @@ import {
   ensureSupportSchema,
   getConversationById,
   getOrCreateUserConversation,
+  SupportSenderType,
   verifySupportSocketAuth
 } from "./support.service";
 
@@ -21,13 +22,63 @@ let io: Server | null = null;
 const conversationRoom = (conversationId: string) => `support:conversation:${conversationId}`;
 const adminInboxRoom = "support:admin-inbox";
 
+const buildSocketCorsOrigins = () => {
+  const origins = new Set<string>([
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://cbrixi.com",
+    "https://www.cbrixi.com",
+    "https://api.cbrixi.com"
+  ]);
+
+  for (const origin of (process.env.CORS_ALLOWED_ORIGINS ?? "").split(",")) {
+    const trimmed = origin.trim();
+    if (trimmed) origins.add(trimmed);
+  }
+
+  if (process.env.FRONTEND_URL) {
+    try {
+      origins.add(new URL(process.env.FRONTEND_URL).origin);
+    } catch {
+      // ignore invalid FRONTEND_URL
+    }
+  }
+
+  return [...origins];
+};
+
+export const broadcastSupportMessage = (
+  conversationId: string,
+  message: { message: string; created_at: string },
+  senderRole: SupportSenderType
+) => {
+  if (!io) return;
+
+  const eventPayload = {
+    conversation_id: conversationId,
+    message
+  };
+
+  io.to(conversationRoom(conversationId)).emit("support:message", eventPayload);
+  io.to(adminInboxRoom).emit("support:conversation:updated", {
+    conversation_id: conversationId,
+    last_message: message.message,
+    last_message_at: message.created_at,
+    unread_count: senderRole === "USER" ? 1 : 0
+  });
+};
+
 export const initSupportSocket = (httpServer: HttpServer) => {
+  if (io) return io;
+
   io = new Server(httpServer, {
     cors: {
-      origin: true,
+      origin: buildSocketCorsOrigins(),
       credentials: true
     },
-    path: "/socket.io"
+    path: "/socket.io",
+    transports: ["polling", "websocket"],
+    allowUpgrades: true
   });
 
   io.use(async (socket: SupportSocket, next) => {
@@ -104,20 +155,17 @@ export const initSupportSocket = (httpServer: HttpServer) => {
           message: messageText
         });
 
-        const eventPayload = {
+        broadcastSupportMessage(
+          conversationId,
+          message,
+          socket.data.role === "admin" ? "ADMIN" : "USER"
+        );
+
+        callback?.({
+          success: true,
           conversation_id: conversationId,
           message
-        };
-
-        io!.to(conversationRoom(conversationId)).emit("support:message", eventPayload);
-        io!.to(adminInboxRoom).emit("support:conversation:updated", {
-          conversation_id: conversationId,
-          last_message: message.message,
-          last_message_at: message.created_at,
-          unread_count: socket.data.role === "user" ? 1 : 0
         });
-
-        callback?.({ success: true, ...eventPayload });
       } catch (error: any) {
         callback?.({ success: false, message: error.message });
       }

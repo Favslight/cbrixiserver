@@ -109,9 +109,13 @@ const socket = io("https://api.cbrixi.com", {
     token: userAccessToken,
     role: "user" // use "admin" on admin dashboard
   },
-  transports: ["websocket", "polling"]
+  transports: ["polling", "websocket"],
+  reconnection: true,
+  reconnectionAttempts: 5
 });
 ```
+
+If WebSocket fails on your host/proxy, the client should still connect through polling. You can also send messages through REST without Socket.IO.
 
 ### Socket events
 
@@ -159,6 +163,18 @@ Authorization: Bearer <user-token>
 
 Returns paginated message history for the user's conversation.
 
+```http
+POST /support/conversation/messages
+Authorization: Bearer <user-token>
+Content-Type: application/json
+
+{
+  "message": "I need help with my installment order"
+}
+```
+
+REST fallback for sending a message when Socket.IO is unavailable.
+
 #### Admin
 
 ```http
@@ -172,6 +188,18 @@ GET /admin/support/conversations/:id/messages?limit=30&offset=0
 ```
 
 Returns conversation details and messages. Marks user messages as read.
+
+```http
+POST /admin/support/conversations/:id/messages
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{
+  "message": "Thanks for reaching out, we are reviewing your order."
+}
+```
+
+REST fallback for admin replies when Socket.IO is unavailable.
 
 ### Message shape
 

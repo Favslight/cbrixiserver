@@ -17,6 +17,14 @@ import {
   getAdminNotificationEmails,
   removeAdminNotificationEmail
 } from "../admin-notifications/adminNotification.service";
+import {
+  createSupportMessage,
+  getConversationById,
+  getConversationMessages,
+  listAdminConversations,
+  markConversationReadForAdmin
+} from "../support/support.service";
+import { broadcastSupportMessage } from "../support/support.socket";
 
 export const adminPaymentRoutes = async (app: FastifyInstance) => {
 
@@ -44,6 +52,69 @@ export const adminPaymentRoutes = async (app: FastifyInstance) => {
       const { id } = req.params as { id: string };
       const email = await removeAdminNotificationEmail(id);
       return reply.send({ success: true, email });
+    } catch (error: any) {
+      return reply.status(400).send({ message: error.message });
+    }
+  });
+
+  app.get("/admin/support/conversations", { preHandler: [requireAdmin] }, async (req, reply) => {
+    const { limit, offset } = req.query as { limit?: string; offset?: string };
+    const result = await listAdminConversations(
+      limit === undefined ? undefined : Number(limit),
+      offset === undefined ? undefined : Number(offset)
+    );
+
+    return reply.send({ success: true, ...result });
+  });
+
+  app.get("/admin/support/conversations/:id/messages", { preHandler: [requireAdmin] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { limit, offset } = req.query as { limit?: string; offset?: string };
+
+    const conversation = await getConversationById(id);
+    if (!conversation) {
+      return reply.status(404).send({ message: "Conversation not found" });
+    }
+
+    await markConversationReadForAdmin(id);
+
+    const result = await getConversationMessages(
+      id,
+      limit === undefined ? undefined : Number(limit),
+      offset === undefined ? undefined : Number(offset)
+    );
+
+    return reply.send({
+      success: true,
+      conversation,
+      ...result
+    });
+  });
+
+  app.post("/admin/support/conversations/:id/messages", { preHandler: [requireAdmin] }, async (req, reply) => {
+    try {
+      const { id } = req.params as { id: string };
+      const body = req.body as { message?: string };
+
+      const conversation = await getConversationById(id);
+      if (!conversation) {
+        return reply.status(404).send({ message: "Conversation not found" });
+      }
+
+      const { message } = await createSupportMessage({
+        conversationId: id,
+        senderType: "ADMIN",
+        senderId: req.admin?.id,
+        message: body.message ?? ""
+      });
+
+      broadcastSupportMessage(id, message, "ADMIN");
+
+      return reply.status(201).send({
+        success: true,
+        conversation_id: id,
+        message
+      });
     } catch (error: any) {
       return reply.status(400).send({ message: error.message });
     }

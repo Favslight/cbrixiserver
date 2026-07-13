@@ -9,6 +9,12 @@ import {
   markNotificationRead,
   NotificationTargetType
 } from "./notification.service";
+import {
+  createSupportMessage,
+  getConversationMessages,
+  getOrCreateUserConversation
+} from "../support/support.service";
+import { broadcastSupportMessage } from "../support/support.socket";
 
 const getStatus = (req: FastifyRequest) => {
   const status = (req.query as { status?: string }).status;
@@ -97,6 +103,50 @@ export const notificationRoutes = async (app: FastifyInstance) => {
   app.delete("/notifications/:id", { preHandler: [requireUser] }, (req, reply) =>
     sendDelete(req, reply, "USER", req.user.id)
   );
+
+  app.get("/support/conversation", { preHandler: [requireUser] }, async (req, reply) => {
+    const conversation = await getOrCreateUserConversation(req.user.id);
+    return reply.send({ success: true, conversation });
+  });
+
+  app.get("/support/conversation/messages", { preHandler: [requireUser] }, async (req, reply) => {
+    const { limit, offset } = req.query as { limit?: string; offset?: string };
+    const conversation = await getOrCreateUserConversation(req.user.id);
+    const result = await getConversationMessages(
+      conversation.id,
+      limit === undefined ? undefined : Number(limit),
+      offset === undefined ? undefined : Number(offset)
+    );
+
+    return reply.send({
+      success: true,
+      conversation_id: conversation.id,
+      ...result
+    });
+  });
+
+  app.post("/support/conversation/messages", { preHandler: [requireUser] }, async (req, reply) => {
+    try {
+      const body = req.body as { message?: string };
+      const conversation = await getOrCreateUserConversation(req.user.id);
+      const { message } = await createSupportMessage({
+        conversationId: conversation.id,
+        senderType: "USER",
+        senderId: req.user.id,
+        message: body.message ?? ""
+      });
+
+      broadcastSupportMessage(conversation.id, message, "USER");
+
+      return reply.status(201).send({
+        success: true,
+        conversation_id: conversation.id,
+        message
+      });
+    } catch (error: any) {
+      return reply.status(400).send({ message: error.message });
+    }
+  });
 
   app.get("/admin/notifications", { preHandler: [requireAdmin] }, (req, reply) =>
     sendNotifications(req, reply, "ADMIN", null)

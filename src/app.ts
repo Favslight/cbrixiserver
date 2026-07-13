@@ -14,7 +14,6 @@ import { authRoutes } from "./modules/auth/auth.route";
 import { partnerRoutes } from "./modules/partner/partner.routes";
 import { referralRoutes } from "./modules/referrals/referral.routes";
 import { notificationRoutes } from "./modules/notifications/notification.routes";
-import { supportRoutes } from "./modules/support/support.routes";
 import { ensureAdminNotificationSchema } from "./modules/admin-notifications/adminNotification.service";
 import { ensureSupportSchema } from "./modules/support/support.service";
 
@@ -149,4 +148,3 @@ app.register(adminPaymentRoutes);
 app.register(partnerRoutes, { prefix: "/api/partner" });
 app.register(referralRoutes);
 app.register(notificationRoutes);
-app.register(supportRoutes);
