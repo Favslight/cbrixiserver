@@ -136,7 +136,7 @@ export const notificationRoutes = async (app: FastifyInstance) => {
         message: body.message ?? ""
       });
 
-      broadcastSupportMessage(conversation.id, message, "USER");
+      await broadcastSupportMessage(conversation.id, message, "USER");
 
       return reply.status(201).send({
         success: true,

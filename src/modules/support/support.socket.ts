@@ -3,6 +3,8 @@ import { Server, Socket } from "socket.io";
 import {
   createSupportMessage,
   ensureSupportSchema,
+  formatConversationForAdmin,
+  formatSupportUserDisplay,
   getConversationById,
   getOrCreateUserConversation,
   SupportSenderType,
@@ -15,6 +17,16 @@ type SupportSocket = Socket & {
     userId?: string;
     adminId?: string;
   };
+};
+
+type SupportMessagePayload = {
+  id?: string;
+  message: string;
+  created_at: string;
+  sender_type?: string;
+  sender_id?: string | null;
+  sender_name?: string;
+  sender_display_name?: string;
 };
 
 let io: Server | null = null;
@@ -47,12 +59,17 @@ const buildSocketCorsOrigins = () => {
   return [...origins];
 };
 
-export const broadcastSupportMessage = (
+export const broadcastSupportMessage = async (
   conversationId: string,
-  message: { message: string; created_at: string },
+  message: SupportMessagePayload,
   senderRole: SupportSenderType
 ) => {
   if (!io) return;
+
+  const conversation = await getConversationById(conversationId);
+  const userDisplay = conversation
+    ? formatSupportUserDisplay(conversation)
+    : null;
 
   const eventPayload = {
     conversation_id: conversationId,
@@ -62,6 +79,14 @@ export const broadcastSupportMessage = (
   io.to(conversationRoom(conversationId)).emit("support:message", eventPayload);
   io.to(adminInboxRoom).emit("support:conversation:updated", {
     conversation_id: conversationId,
+    user_id: conversation?.user_id ?? null,
+    firstname: userDisplay?.firstname ?? null,
+    lastname: userDisplay?.lastname ?? null,
+    username: userDisplay?.username ?? null,
+    email: userDisplay?.email ?? null,
+    full_name: userDisplay?.full_name ?? null,
+    name: userDisplay?.name ?? null,
+    display_name: userDisplay?.display_name ?? null,
     last_message: message.message,
     last_message_at: message.created_at,
     unread_count: senderRole === "USER" ? 1 : 0
@@ -104,8 +129,12 @@ export const initSupportSocket = (httpServer: HttpServer) => {
       socket.join(adminInboxRoom);
     } else if (socket.data.userId) {
       const conversation = await getOrCreateUserConversation(socket.data.userId);
+      const conversationDetails = await getConversationById(conversation.id);
       socket.join(conversationRoom(conversation.id));
-      socket.emit("support:conversation", { conversation_id: conversation.id });
+      socket.emit("support:conversation", {
+        conversation_id: conversation.id,
+        ...(conversationDetails ? formatConversationForAdmin(conversationDetails) : {})
+      });
     }
 
     socket.on("support:join", async (payload: { conversation_id?: string }, callback) => {
@@ -115,13 +144,22 @@ export const initSupportSocket = (httpServer: HttpServer) => {
           const conversation = await getConversationById(payload.conversation_id);
           if (!conversation) throw new Error("Conversation not found");
           socket.join(conversationRoom(conversation.id));
-          callback?.({ success: true, conversation_id: conversation.id });
+          callback?.({
+            success: true,
+            conversation_id: conversation.id,
+            conversation
+          });
           return;
         }
 
         const conversation = await getOrCreateUserConversation(socket.data.userId!);
+        const conversationDetails = await getConversationById(conversation.id);
         socket.join(conversationRoom(conversation.id));
-        callback?.({ success: true, conversation_id: conversation.id });
+        callback?.({
+          success: true,
+          conversation_id: conversation.id,
+          conversation: conversationDetails
+        });
       } catch (error: any) {
         callback?.({ success: false, message: error.message });
       }
@@ -155,7 +193,7 @@ export const initSupportSocket = (httpServer: HttpServer) => {
           message: messageText
         });
 
-        broadcastSupportMessage(
+        await broadcastSupportMessage(
           conversationId,
           message,
           socket.data.role === "admin" ? "ADMIN" : "USER"

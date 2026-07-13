@@ -46,6 +46,95 @@ const normalizePagination = (limit?: number, offset?: number) => ({
   offset: Math.max(Number(offset ?? 0), 0)
 });
 
+const normalizeText = (value: unknown) => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+};
+
+export const formatSupportUserDisplay = (row: {
+  user_id?: string;
+  firstname?: string | null;
+  lastname?: string | null;
+  username?: string | null;
+  email?: string | null;
+}) => {
+  const firstName = normalizeText(row.firstname);
+  const lastName = normalizeText(row.lastname);
+  const username = normalizeText(row.username);
+  const email = normalizeText(row.email);
+  const fullName = [firstName, lastName].filter(Boolean).join(" ");
+  const name = fullName || username || email || (row.user_id ? `User ${row.user_id.slice(0, 8)}` : "Customer");
+
+  return {
+    firstname: firstName,
+    lastname: lastName,
+    username,
+    email,
+    full_name: fullName || null,
+    name,
+    display_name: name
+  };
+};
+
+export const formatConversationForAdmin = (row: Record<string, any>) => {
+  const userDisplay = formatSupportUserDisplay({
+    user_id: row.user_id,
+    firstname: row.firstname,
+    lastname: row.lastname,
+    username: row.username,
+    email: row.email
+  });
+
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    status: row.status,
+    ...userDisplay,
+    last_message: row.last_message ?? null,
+    unread_count: Number(row.unread_count ?? 0),
+    last_message_at: row.last_message_at ?? null,
+    created_at: row.created_at,
+    updated_at: row.updated_at ?? null
+  };
+};
+
+const formatMessageRow = (row: Record<string, any>) => {
+  const senderDisplay = row.sender_type === "USER"
+    ? formatSupportUserDisplay({
+        user_id: row.sender_id,
+        firstname: row.sender_firstname,
+        lastname: row.sender_lastname,
+        username: row.sender_username,
+        email: row.sender_email
+      })
+    : {
+        name: "CBRIXI Support",
+        display_name: "CBRIXI Support",
+        full_name: "CBRIXI Support",
+        firstname: null,
+        lastname: null,
+        username: null,
+        email: null
+      };
+
+  return {
+    id: row.id,
+    conversation_id: row.conversation_id,
+    sender_type: row.sender_type,
+    sender_id: row.sender_id,
+    message: row.message,
+    read_at: row.read_at,
+    created_at: row.created_at,
+    sender_name: senderDisplay.name,
+    sender_display_name: senderDisplay.display_name,
+    sender_firstname: senderDisplay.firstname,
+    sender_lastname: senderDisplay.lastname,
+    sender_username: senderDisplay.username,
+    sender_email: senderDisplay.email
+  };
+};
+
 export const getOrCreateUserConversation = async (userId: string) => {
   await ensureSupportSchema();
 
@@ -83,6 +172,7 @@ export const getConversationById = async (conversationId: string) => {
       sc.*,
       u.firstname,
       u.lastname,
+      u.username,
       u.email
     FROM support_conversations sc
     JOIN users u ON u.id = sc.user_id
@@ -91,7 +181,10 @@ export const getConversationById = async (conversationId: string) => {
     [conversationId]
   );
 
-  return result.rows[0] ?? null;
+  const row = result.rows[0];
+  if (!row) return null;
+
+  return formatConversationForAdmin(row);
 };
 
 export const listAdminConversations = async (limit?: number, offset?: number) => {
@@ -104,6 +197,7 @@ export const listAdminConversations = async (limit?: number, offset?: number) =>
       sc.*,
       u.firstname,
       u.lastname,
+      u.username,
       u.email,
       COUNT(*) OVER()::INT AS total_count,
       (
@@ -131,19 +225,7 @@ export const listAdminConversations = async (limit?: number, offset?: number) =>
   const total = Number(result.rows[0]?.total_count ?? 0);
 
   return {
-    conversations: result.rows.map((row) => ({
-      id: row.id,
-      user_id: row.user_id,
-      status: row.status,
-      firstname: row.firstname,
-      lastname: row.lastname,
-      email: row.email,
-      name: `${row.firstname ?? ""} ${row.lastname ?? ""}`.trim() || row.email,
-      last_message: row.last_message,
-      unread_count: Number(row.unread_count ?? 0),
-      last_message_at: row.last_message_at,
-      created_at: row.created_at
-    })),
+    conversations: result.rows.map((row) => formatConversationForAdmin(row)),
     pagination: {
       limit: pagination.limit,
       offset: pagination.offset,
@@ -169,17 +251,23 @@ export const getConversationMessages = async (
 
   const result = await pool.query(
     `
-    SELECT *
-    FROM support_messages
-    WHERE conversation_id = $1
-    ORDER BY created_at ASC
+    SELECT
+      sm.*,
+      u.firstname AS sender_firstname,
+      u.lastname AS sender_lastname,
+      u.username AS sender_username,
+      u.email AS sender_email
+    FROM support_messages sm
+    LEFT JOIN users u ON u.id = sm.sender_id AND sm.sender_type = 'USER'
+    WHERE sm.conversation_id = $1
+    ORDER BY sm.created_at ASC
     LIMIT $2 OFFSET $3
     `,
     [conversationId, pagination.limit, pagination.offset]
   );
 
   return {
-    messages: result.rows,
+    messages: result.rows.map((row) => formatMessageRow(row)),
     pagination: {
       limit: pagination.limit,
       offset: pagination.offset,
@@ -236,8 +324,19 @@ export const createSupportMessage = async (input: {
     );
   }
 
+  const inserted = result.rows[0];
+  const enrichedRow = input.senderType === "USER"
+    ? {
+        ...inserted,
+        sender_firstname: conversation.firstname,
+        sender_lastname: conversation.lastname,
+        sender_username: conversation.username,
+        sender_email: conversation.email
+      }
+    : inserted;
+
   return {
-    message: result.rows[0],
+    message: formatMessageRow(enrichedRow),
     conversation
   };
 };

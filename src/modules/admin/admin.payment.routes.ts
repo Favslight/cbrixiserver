@@ -108,7 +108,7 @@ export const adminPaymentRoutes = async (app: FastifyInstance) => {
         message: body.message ?? ""
       });
 
-      broadcastSupportMessage(id, message, "ADMIN");
+      await broadcastSupportMessage(id, message, "ADMIN");
 
       return reply.status(201).send({
         success: true,
