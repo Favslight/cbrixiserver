@@ -354,3 +354,142 @@ export const rejectPayment = async (
 
   return reply.send({ success:true });
 };
+
+export const deletePayment = async (
+  req: FastifyRequest,
+  reply: FastifyReply
+) => {
+  const { id } = req.params as { id: string };
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const txnRes = await client.query(
+      `SELECT * FROM payment_transactions WHERE id = $1 FOR UPDATE`,
+      [id]
+    );
+    const txn = txnRes.rows[0];
+
+    if (!txn) {
+      await client.query("ROLLBACK");
+      return reply.status(404).send({ success: false, message: "Payment not found" });
+    }
+
+    await client.query(
+      `DELETE FROM referral_rewards WHERE payment_transaction_id = $1`,
+      [id]
+    );
+
+    await client.query(
+      `DELETE FROM payment_transactions WHERE id = $1`,
+      [id]
+    );
+
+    if (txn.status === "SUCCESS" && txn.order_id) {
+      await client.query(
+        `
+        UPDATE orders o
+        SET remaining_balance = GREATEST(o.total_amount - paid.total_paid, 0),
+            status = CASE
+              WHEN GREATEST(o.total_amount - paid.total_paid, 0) <= 0 THEN 'PAID'
+              WHEN paid.total_paid > 0 THEN 'PARTIALLY_PAID'
+              WHEN o.status IN ('AWAITING_APPROVAL', 'REJECTED') THEN o.status
+              ELSE 'PENDING'
+            END,
+            updated_at = NOW()
+        FROM (
+          SELECT COALESCE(SUM(amount), 0) AS total_paid
+          FROM payment_transactions
+          WHERE order_id = $1 AND status = 'SUCCESS'
+        ) paid
+        WHERE o.id = $1
+        `,
+        [txn.order_id]
+      );
+    }
+
+    await client.query("COMMIT");
+
+    return reply.send({
+      success: true,
+      deleted_id: id,
+      order_id: txn.order_id
+    });
+  } catch (error: any) {
+    await client.query("ROLLBACK");
+    return reply.status(400).send({ success: false, message: error.message });
+  } finally {
+    client.release();
+  }
+};
+
+export const deleteOrder = async (
+  req: FastifyRequest,
+  reply: FastifyReply
+) => {
+  const { id } = req.params as { id: string };
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const orderRes = await client.query(
+      `SELECT * FROM orders WHERE id = $1 FOR UPDATE`,
+      [id]
+    );
+    const order = orderRes.rows[0];
+
+    if (!order) {
+      await client.query("ROLLBACK");
+      return reply.status(404).send({ success: false, message: "Order not found" });
+    }
+
+    await client.query(
+      `DELETE FROM referral_rewards WHERE order_id = $1`,
+      [id]
+    );
+
+    await client.query(
+      `
+      DELETE FROM referral_rewards
+      WHERE payment_transaction_id IN (
+        SELECT id FROM payment_transactions WHERE order_id = $1
+      )
+      `,
+      [id]
+    );
+
+    await client.query(
+      `DELETE FROM payment_transactions WHERE order_id = $1`,
+      [id]
+    );
+
+    await client.query(
+      `DELETE FROM default_events WHERE order_id = $1`,
+      [id]
+    );
+
+    await client.query(
+      `DELETE FROM email_logs WHERE order_id = $1`,
+      [id]
+    );
+
+    await client.query(
+      `DELETE FROM orders WHERE id = $1`,
+      [id]
+    );
+
+    await client.query("COMMIT");
+
+    return reply.send({
+      success: true,
+      deleted_id: id
+    });
+  } catch (error: any) {
+    await client.query("ROLLBACK");
+    return reply.status(400).send({ success: false, message: error.message });
+  } finally {
+    client.release();
+  }
+};

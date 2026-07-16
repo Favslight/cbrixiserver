@@ -291,6 +291,76 @@ Use the same IDs returned by the list endpoints:
 - Order actions use `order.id`.
 - Payment actions use `payment.id`.
 
+## Delete Actions
+
+Admins can permanently delete approved/rejected payments and any order from the dashboard.
+
+```ts
+DELETE /admin/payments/:id
+Authorization: Bearer <admin-token>
+```
+
+Deletes the payment transaction from the database.
+
+- Use `payment.id` from approved or rejected payment lists.
+- Also works for pending payments if needed.
+- Related referral rewards for that payment are removed.
+- If the payment was `SUCCESS`, the linked order `remaining_balance` and status are recalculated.
+
+Response:
+
+```json
+{
+  "success": true,
+  "deleted_id": "payment-uuid",
+  "order_id": "order-uuid"
+}
+```
+
+```ts
+DELETE /admin/orders/:id
+Authorization: Bearer <admin-token>
+```
+
+Deletes the order and related records from the database:
+
+- order items
+- installments
+- payment transactions for that order
+- referral rewards for that order
+- email logs / default events for that order
+
+Use `order.id` from pending, approved, or rejected order lists.
+
+Response:
+
+```json
+{
+  "success": true,
+  "deleted_id": "order-uuid"
+}
+```
+
+Frontend notes:
+
+- Show a confirmation dialog before calling delete.
+- After success, remove the row from the current table state.
+- Refresh the list if needed: `GET /admin/payments/approved`, `GET /admin/payments/rejected`, `GET /admin/orders/approved`, or `GET /admin/orders/rejected`.
+
+Example:
+
+```ts
+await fetch(`${API_URL}/admin/payments/${payment.id}`, {
+  method: "DELETE",
+  headers: { Authorization: `Bearer ${adminToken}` }
+});
+
+await fetch(`${API_URL}/admin/orders/${order.id}`, {
+  method: "DELETE",
+  headers: { Authorization: `Bearer ${adminToken}` }
+});
+```
+
 ## UI Behavior Checklist
 
 - Show customer `full_name` or `name` in the users, orders, and payments tables.
@@ -300,3 +370,5 @@ Use the same IDs returned by the list endpoints:
 - In detail drawers/modals, render all `order_items` with product name, variant, quantity, unit price, and line total.
 - Use snapshot fields for historical order display. Do not replace old order item names with newly edited product names unless snapshot fields are empty.
 - For payment approvals, show `payment_label`, `order_summary`, `reference`, `amount`, `payment_method`, and the full `order_items` list before the admin confirms.
+- Add Delete actions on approved/rejected payments and on order lists using `DELETE /admin/payments/:id` and `DELETE /admin/orders/:id`.
+- Confirm before delete, then remove the row from the UI after a successful response.

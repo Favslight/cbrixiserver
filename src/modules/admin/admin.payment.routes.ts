@@ -5,11 +5,13 @@ import {
   getRejectedPayments,
   approvePayment,
   rejectPayment,
+  deletePayment,
   approveOrder,
   getPendingOrders,
   getApprovedOrders,
   getRejectedOrders,
-  rejectOrder
+  rejectOrder,
+  deleteOrder
 } from "./admin.payment.controller";
 import { requireAdmin } from "./admin.auth";
 import {
@@ -135,9 +137,12 @@ export const adminPaymentRoutes = async (app: FastifyInstance) => {
 
   app.post("/admin/payments/:id/approve", { preHandler: [requireAdmin] }, approvePayment);
   app.post("/admin/payments/:id/reject", { preHandler: [requireAdmin] }, rejectPayment);
+  app.delete("/admin/payments/:id", { preHandler: [requireAdmin] }, deletePayment);
+
   app.post("/admin/orders/:id/approve", { preHandler: [requireAdmin] }, approveOrder);
   app.get("/admin/orders/pending", { preHandler: [requireAdmin] }, getPendingOrders);
   app.get("/admin/orders/approved", { preHandler: [requireAdmin] }, getApprovedOrders);
   app.get("/admin/orders/rejected", { preHandler: [requireAdmin] }, getRejectedOrders);
   app.post("/admin/orders/:id/reject", { preHandler: [requireAdmin] }, rejectOrder);
+  app.delete("/admin/orders/:id", { preHandler: [requireAdmin] }, deleteOrder);
 };
