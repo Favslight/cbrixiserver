@@ -23,7 +23,8 @@ const roundMoney = (value: number) => Math.round(value * 100) / 100;
 
 export const ensureReferralSchema = async () => {
   if (!ensureReferralSchemaPromise) {
-    ensureReferralSchemaPromise = pool.query(`
+    ensureReferralSchemaPromise = (async () => {
+      await pool.query(`
       ALTER TABLE users
       ADD COLUMN IF NOT EXISTS referral_code VARCHAR(32),
       ADD COLUMN IF NOT EXISTS referred_by_user_id UUID REFERENCES users(id),
@@ -56,8 +57,8 @@ export const ensureReferralSchema = async () => {
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         referrer_id UUID NOT NULL REFERENCES users(id),
         referred_user_id UUID NOT NULL REFERENCES users(id),
-        order_id UUID NOT NULL REFERENCES orders(id),
-        payment_transaction_id UUID NOT NULL UNIQUE REFERENCES payment_transactions(id),
+        order_id UUID REFERENCES orders(id) ON DELETE SET NULL,
+        payment_transaction_id UUID UNIQUE REFERENCES payment_transactions(id) ON DELETE SET NULL,
         purchase_amount NUMERIC(15,2) NOT NULL,
         bonus_percentage NUMERIC(5,2) NOT NULL,
         reward_amount NUMERIC(15,2) NOT NULL,
@@ -82,7 +83,8 @@ export const ensureReferralSchema = async () => {
 
       ALTER TABLE referral_rewards
       ADD COLUMN IF NOT EXISTS payout_request_id UUID REFERENCES referral_payout_requests(id),
-      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS restored_from_notification_id UUID;
 
       CREATE INDEX IF NOT EXISTS idx_referral_rewards_referrer_id
       ON referral_rewards(referrer_id);
@@ -93,12 +95,59 @@ export const ensureReferralSchema = async () => {
       CREATE INDEX IF NOT EXISTS idx_referral_rewards_status
       ON referral_rewards(status);
 
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_referral_rewards_restored_notification
+      ON referral_rewards(restored_from_notification_id)
+      WHERE restored_from_notification_id IS NOT NULL;
+
       CREATE INDEX IF NOT EXISTS idx_referral_payout_requests_user_id
       ON referral_payout_requests(user_id);
 
       CREATE INDEX IF NOT EXISTS idx_referral_payout_requests_status
       ON referral_payout_requests(status);
-    `).then(() => undefined);
+      `);
+
+      // Keep referral earnings even if admin deletes the related payment/order.
+      await pool.query(`
+      DO $$
+      DECLARE
+        constraint_row RECORD;
+      BEGIN
+        ALTER TABLE referral_rewards
+          ALTER COLUMN order_id DROP NOT NULL,
+          ALTER COLUMN payment_transaction_id DROP NOT NULL;
+
+        FOR constraint_row IN
+          SELECT con.conname
+          FROM pg_constraint con
+          JOIN pg_class rel ON rel.oid = con.conrelid
+          WHERE rel.relname = 'referral_rewards'
+            AND con.contype = 'f'
+            AND (
+              con.confrelid = 'orders'::regclass
+              OR con.confrelid = 'payment_transactions'::regclass
+            )
+        LOOP
+          EXECUTE format('ALTER TABLE referral_rewards DROP CONSTRAINT %I', constraint_row.conname);
+        END LOOP;
+
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'referral_rewards_order_id_fkey'
+        ) THEN
+          ALTER TABLE referral_rewards
+            ADD CONSTRAINT referral_rewards_order_id_fkey
+              FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL;
+        END IF;
+
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'referral_rewards_payment_transaction_id_fkey'
+        ) THEN
+          ALTER TABLE referral_rewards
+            ADD CONSTRAINT referral_rewards_payment_transaction_id_fkey
+              FOREIGN KEY (payment_transaction_id) REFERENCES payment_transactions(id) ON DELETE SET NULL;
+        END IF;
+      END $$;
+      `);
+    })();
   }
 
   await ensureReferralSchemaPromise;
@@ -282,7 +331,9 @@ export const recordReferralRewardForTransaction = async (transactionId: string) 
       referred_user_id: txn.user_id,
       order_id: txn.order_id,
       payment_transaction_id: txn.id,
-      reward_amount: rewardAmount
+      reward_amount: rewardAmount,
+      purchase_amount: purchaseAmount,
+      bonus_percentage: bonusPercentage
     }
   });
 
@@ -303,6 +354,345 @@ export const recordReferralRewardForTransaction = async (transactionId: string) 
   return reward;
 };
 
+/**
+ * Restores missing referral rewards from SUCCESS payments and from bonus notifications.
+ * Safe to run repeatedly (idempotent).
+ */
+export const rebuildMissingReferralRewards = async (referrerId?: string) => {
+  await ensureReferralSchema();
+
+  const { ensureNotificationSchema } = await import("../notifications/notification.service");
+  await ensureNotificationSchema();
+
+  const settings = await getReferralSettings();
+  const settingsBonusPercentage = Number(settings?.bonus_percentage ?? 0);
+  const restored: Array<Record<string, unknown>> = [];
+
+  const parseRewardAmountFromMessage = (message?: string | null) => {
+    if (!message) return 0;
+    const match = message.match(/NGN\s*([\d,]+(?:\.\d+)?)/i);
+    if (!match?.[1]) return 0;
+    return Number(match[1].replace(/,/g, ""));
+  };
+
+  const paymentValues: unknown[] = [];
+  let paymentReferrerFilter = "";
+  if (referrerId) {
+    paymentValues.push(referrerId);
+    paymentReferrerFilter = `AND buyer.referred_by_user_id = $${paymentValues.length}`;
+  }
+
+  const missingPaymentRewards = await pool.query(
+    `
+    SELECT
+      pt.id AS payment_transaction_id,
+      pt.order_id,
+      pt.amount,
+      buyer.id AS referred_user_id,
+      buyer.referred_by_user_id AS referrer_id
+    FROM payment_transactions pt
+    JOIN orders o ON o.id = pt.order_id
+    JOIN users buyer ON buyer.id = o.user_id
+    WHERE pt.status = 'SUCCESS'
+      AND buyer.referred_by_user_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM referral_rewards rr
+        WHERE rr.payment_transaction_id = pt.id
+      )
+      ${paymentReferrerFilter}
+    ORDER BY pt.created_at ASC
+    `,
+    paymentValues
+  );
+
+  for (const row of missingPaymentRewards.rows) {
+    const purchaseAmount = Number(row.amount);
+    if (purchaseAmount <= 0) continue;
+
+    const linkedNotification = await pool.query(
+      `
+      SELECT metadata, message
+      FROM notifications
+      WHERE type = 'REFERRAL_BONUS_EARNED'
+        AND user_id = $1
+        AND (
+          metadata->>'payment_transaction_id' = $2
+          OR metadata->>'order_id' = $3
+        )
+      ORDER BY created_at ASC
+      LIMIT 1
+      `,
+      [row.referrer_id, row.payment_transaction_id, row.order_id]
+    );
+
+    const notificationMeta = (linkedNotification.rows[0]?.metadata ?? {}) as Record<string, unknown>;
+    const rewardPercentage = Number(
+      notificationMeta.bonus_percentage ?? (settingsBonusPercentage > 0 ? settingsBonusPercentage : 0)
+    );
+    const rewardAmountFromNotification = Number(notificationMeta.reward_amount ?? 0);
+    const rewardAmountFromMessage = parseRewardAmountFromMessage(linkedNotification.rows[0]?.message);
+
+    const rewardAmount = rewardAmountFromNotification > 0
+      ? roundMoney(rewardAmountFromNotification)
+      : rewardAmountFromMessage > 0
+        ? roundMoney(rewardAmountFromMessage)
+        : rewardPercentage > 0
+          ? roundMoney((purchaseAmount * rewardPercentage) / 100)
+          : 0;
+
+    if (rewardAmount <= 0) continue;
+
+    const inserted = await pool.query(
+      `
+      INSERT INTO referral_rewards
+        (referrer_id, referred_user_id, order_id, payment_transaction_id,
+         purchase_amount, bonus_percentage, reward_amount, status)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'AVAILABLE')
+      ON CONFLICT (payment_transaction_id) DO NOTHING
+      RETURNING *
+      `,
+      [
+        row.referrer_id,
+        row.referred_user_id,
+        row.order_id,
+        row.payment_transaction_id,
+        purchaseAmount,
+        rewardPercentage > 0
+          ? rewardPercentage
+          : roundMoney((rewardAmount / purchaseAmount) * 100),
+        rewardAmount
+      ]
+    );
+
+    if (inserted.rows[0]) {
+      restored.push(inserted.rows[0]);
+    }
+  }
+
+  const notificationValues: unknown[] = ["REFERRAL_BONUS_EARNED"];
+  let notificationReferrerFilter = "";
+  if (referrerId) {
+    notificationValues.push(referrerId);
+    notificationReferrerFilter = `AND n.user_id = $${notificationValues.length}`;
+  }
+
+  // Include soft-deleted notifications so wiped earnings can still be recovered.
+  const missingFromNotifications = await pool.query(
+    `
+    SELECT
+      n.id AS notification_id,
+      n.user_id AS referrer_id,
+      n.metadata,
+      n.message,
+      n.created_at
+    FROM notifications n
+    WHERE n.type = $1
+      AND n.user_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM referral_rewards rr
+        WHERE rr.restored_from_notification_id = n.id
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM referral_rewards rr
+        WHERE n.metadata ? 'payment_transaction_id'
+          AND NULLIF(n.metadata->>'payment_transaction_id', '') IS NOT NULL
+          AND rr.payment_transaction_id = NULLIF(n.metadata->>'payment_transaction_id', '')::UUID
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM referral_rewards rr
+        WHERE n.metadata ? 'reward_id'
+          AND NULLIF(n.metadata->>'reward_id', '') IS NOT NULL
+          AND rr.id = NULLIF(n.metadata->>'reward_id', '')::UUID
+      )
+      ${notificationReferrerFilter}
+    ORDER BY n.created_at ASC
+    `,
+    notificationValues
+  );
+
+  for (const row of missingFromNotifications.rows) {
+    const metadata = (row.metadata ?? {}) as Record<string, unknown>;
+    let referredUserId = typeof metadata.referred_user_id === "string"
+      ? metadata.referred_user_id
+      : null;
+    const orderId = typeof metadata.order_id === "string" ? metadata.order_id : null;
+    const paymentTransactionId = typeof metadata.payment_transaction_id === "string"
+      ? metadata.payment_transaction_id
+      : null;
+
+    let rewardAmount = Number(metadata.reward_amount ?? 0);
+    if (!(rewardAmount > 0)) {
+      rewardAmount = parseRewardAmountFromMessage(row.message);
+    }
+
+    const purchaseAmount = Number(metadata.purchase_amount ?? 0);
+    const rewardPercentage = Number(
+      metadata.bonus_percentage ?? settingsBonusPercentage ?? 0
+    );
+
+    if (!referredUserId && orderId) {
+      const orderUser = await pool.query(`SELECT user_id FROM orders WHERE id = $1`, [orderId]);
+      referredUserId = orderUser.rows[0]?.user_id ?? null;
+    }
+
+    if (!referredUserId && paymentTransactionId) {
+      const paymentUser = await pool.query(
+        `SELECT user_id FROM payment_transactions WHERE id = $1`,
+        [paymentTransactionId]
+      );
+      referredUserId = paymentUser.rows[0]?.user_id ?? null;
+    }
+
+    if (!referredUserId || !Number.isFinite(rewardAmount) || rewardAmount <= 0) {
+      continue;
+    }
+
+    const alreadyRestored = await pool.query(
+      `
+      SELECT id
+      FROM referral_rewards
+      WHERE referrer_id = $1
+        AND referred_user_id = $2
+        AND reward_amount = $3
+        AND (
+          ($4::uuid IS NOT NULL AND order_id = $4)
+          OR ($5::uuid IS NOT NULL AND payment_transaction_id = $5)
+          OR (
+            payment_transaction_id IS NULL
+            AND order_id IS NULL
+            AND restored_from_notification_id IS NOT NULL
+          )
+        )
+      LIMIT 1
+      `,
+      [row.referrer_id, referredUserId, roundMoney(rewardAmount), orderId, paymentTransactionId]
+    );
+    if (alreadyRestored.rows[0]) continue;
+
+    const paymentExists = paymentTransactionId
+      ? (await pool.query(`SELECT id FROM payment_transactions WHERE id = $1`, [paymentTransactionId])).rows[0]
+      : null;
+    const orderExists = orderId
+      ? (await pool.query(`SELECT id FROM orders WHERE id = $1`, [orderId])).rows[0]
+      : null;
+
+    try {
+      const inserted = await pool.query(
+        `
+        INSERT INTO referral_rewards
+          (referrer_id, referred_user_id, order_id, payment_transaction_id,
+           purchase_amount, bonus_percentage, reward_amount, status, restored_from_notification_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'AVAILABLE', $8)
+        RETURNING *
+        `,
+        [
+          row.referrer_id,
+          referredUserId,
+          orderExists ? orderId : null,
+          paymentExists ? paymentTransactionId : null,
+          purchaseAmount > 0 ? purchaseAmount : roundMoney(rewardAmount),
+          rewardPercentage > 0 ? rewardPercentage : 0,
+          roundMoney(rewardAmount),
+          row.notification_id
+        ]
+      );
+
+      if (inserted.rows[0]) {
+        restored.push(inserted.rows[0]);
+      }
+    } catch (error: any) {
+      // Ignore unique conflicts if another restore path already created the row.
+      if (error?.code !== "23505") {
+        throw error;
+      }
+    }
+  }
+
+  return {
+    restored_count: restored.length,
+    restored
+  };
+};
+
+export const creditReferralRewardManually = async (input: {
+  referrer_id?: string;
+  referrer_email?: string;
+  referred_user_id?: string | null;
+  referred_email?: string | null;
+  reward_amount: number;
+  purchase_amount?: number;
+  bonus_percentage?: number;
+  note?: string;
+}) => {
+  await ensureReferralSchema();
+
+  const rewardAmount = roundMoney(Number(input.reward_amount));
+  if (!Number.isFinite(rewardAmount) || rewardAmount <= 0) {
+    throw new Error("reward_amount must be greater than 0");
+  }
+
+  let referrerId = input.referrer_id?.trim() || null;
+  if (!referrerId && input.referrer_email) {
+    const referrerRes = await pool.query(
+      `SELECT id FROM users WHERE LOWER(email) = LOWER($1)`,
+      [input.referrer_email.trim()]
+    );
+    referrerId = referrerRes.rows[0]?.id ?? null;
+  }
+  if (!referrerId) throw new Error("Referrer not found");
+
+  let referredUserId = input.referred_user_id?.trim() || null;
+  if (!referredUserId && input.referred_email) {
+    const referredRes = await pool.query(
+      `SELECT id FROM users WHERE LOWER(email) = LOWER($1)`,
+      [input.referred_email.trim()]
+    );
+    referredUserId = referredRes.rows[0]?.id ?? null;
+  }
+  if (!referredUserId) {
+    // Keep a valid FK even for manual credits with unknown referred user.
+    referredUserId = referrerId;
+  }
+
+  const purchaseAmount = roundMoney(Number(input.purchase_amount ?? rewardAmount));
+  const bonusPercentage = Number(input.bonus_percentage ?? 0);
+
+  const inserted = await pool.query(
+    `
+    INSERT INTO referral_rewards
+      (referrer_id, referred_user_id, order_id, payment_transaction_id,
+       purchase_amount, bonus_percentage, reward_amount, status)
+    VALUES ($1, $2, NULL, NULL, $3, $4, $5, 'AVAILABLE')
+    RETURNING *
+    `,
+    [referrerId, referredUserId, purchaseAmount, bonusPercentage, rewardAmount]
+  );
+
+  const reward = inserted.rows[0];
+
+  await createNotification({
+    targetType: "USER",
+    userId: referrerId,
+    title: "Referral balance restored",
+    message: `Your referral balance of NGN ${rewardAmount.toLocaleString("en-NG")} has been restored.${input.note ? ` Note: ${input.note}` : ""}`,
+    type: "REFERRAL_BONUS_EARNED",
+    metadata: {
+      reward_id: reward.id,
+      reward_amount: rewardAmount,
+      purchase_amount: purchaseAmount,
+      bonus_percentage: bonusPercentage,
+      manual_credit: true,
+      note: input.note ?? null
+    }
+  });
+
+  return reward;
+};
+
 type ReferralDashboardOptions = {
   limit?: number;
   offset?: number;
@@ -319,6 +709,13 @@ export const getMyReferralDashboard = async (
   options?: ReferralDashboardOptions
 ) => {
   await ensureReferralSchema();
+
+  // Self-heal: restore any referral earnings wiped by payment/order deletes.
+  try {
+    await rebuildMissingReferralRewards(userId);
+  } catch (error) {
+    console.error("Failed to rebuild missing referral rewards", error);
+  }
 
   const userRes = await pool.query(
     `

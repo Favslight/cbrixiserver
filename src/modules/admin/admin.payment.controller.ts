@@ -4,7 +4,7 @@ import { applyPayment, sendPaymentSuccessNotification } from "../payments/paymen
 import { sendEmail } from "../email/email.service";
 import { orderApprovedTemplate, orderRejectedTemplate } from "../email/email.templates";
 import { EmailType } from "../email/email.types";
-import { recordReferralRewardForTransaction } from "../referrals/referral.service";
+import { ensureReferralSchema, recordReferralRewardForTransaction } from "../referrals/referral.service";
 import {
   ensureCbrillianceVerificationColumns,
   markUserCbrillianceEmailVerified,
@@ -360,6 +360,7 @@ export const deletePayment = async (
   reply: FastifyReply
 ) => {
   const { id } = req.params as { id: string };
+  await ensureReferralSchema();
   const client = await pool.connect();
 
   try {
@@ -377,7 +378,12 @@ export const deletePayment = async (
     }
 
     await client.query(
-      `DELETE FROM referral_rewards WHERE payment_transaction_id = $1`,
+      `
+      UPDATE referral_rewards
+      SET payment_transaction_id = NULL,
+          updated_at = NOW()
+      WHERE payment_transaction_id = $1
+      `,
       [id]
     );
 
@@ -429,6 +435,7 @@ export const deleteOrder = async (
   reply: FastifyReply
 ) => {
   const { id } = req.params as { id: string };
+  await ensureReferralSchema();
   const client = await pool.connect();
 
   try {
@@ -446,16 +453,15 @@ export const deleteOrder = async (
     }
 
     await client.query(
-      `DELETE FROM referral_rewards WHERE order_id = $1`,
-      [id]
-    );
-
-    await client.query(
       `
-      DELETE FROM referral_rewards
-      WHERE payment_transaction_id IN (
-        SELECT id FROM payment_transactions WHERE order_id = $1
-      )
+      UPDATE referral_rewards
+      SET order_id = NULL,
+          payment_transaction_id = NULL,
+          updated_at = NOW()
+      WHERE order_id = $1
+         OR payment_transaction_id IN (
+           SELECT id FROM payment_transactions WHERE order_id = $1
+         )
       `,
       [id]
     );

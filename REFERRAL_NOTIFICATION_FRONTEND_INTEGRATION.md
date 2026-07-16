@@ -107,6 +107,46 @@ Reward rule:
 - Backend creates rewards only after a payment is confirmed successful.
 - If a product discount is active, rewards are based on the discounted/effective amount because checkout/payment uses `effective_price`.
 - For installment orders, rewards are earned as each successful deposit/installment payment is approved or verified.
+- Referral balances are preserved even if an admin later deletes the related payment or order.
+- Opening `GET /referrals/me` auto-restores any missing rewards from successful payments and from referral bonus notifications.
+
+## Admin Rebuild Referral Rewards
+
+If a user's balance looks wrong after cleanup/deletes, admin can force a rebuild:
+
+```ts
+POST /admin/referrals/rebuild-rewards
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{
+  "referrer_email": "user@example.com"
+}
+```
+
+Accepted body fields:
+
+- `referrer_email` — restore for one user by email
+- `referrer_id` / `user_id` — restore for one user by id
+- omit all — rebuild for everyone
+
+Response includes `restored_count`.
+
+If auto-rebuild cannot find the original payment/notification, manually credit the balance:
+
+```ts
+POST /admin/referrals/rewards/credit
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{
+  "referrer_email": "user@example.com",
+  "reward_amount": 30800,
+  "note": "Restored missing referral balance"
+}
+```
+
+After either call, ask the user to refresh `GET /referrals/me`. Their `stats.available_balance` should show the restored amount.
 
 ## Request Referral Payout
 
