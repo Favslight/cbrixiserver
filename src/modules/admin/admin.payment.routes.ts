@@ -58,18 +58,27 @@ export const adminPaymentRoutes = async (app: FastifyInstance) => {
   });
 
   app.get("/admin/support/conversations", { preHandler: [requireAdmin] }, async (req, reply) => {
-    const { limit, offset } = req.query as { limit?: string; offset?: string };
-    const result = await listAdminConversations(
-      limit === undefined ? undefined : Number(limit),
-      offset === undefined ? undefined : Number(offset)
-    );
+    const { limit, offset, page } = req.query as {
+      limit?: string;
+      offset?: string;
+      page?: string;
+    };
+    const result = await listAdminConversations({
+      limit: limit === undefined ? undefined : Number(limit),
+      offset: offset === undefined ? undefined : Number(offset),
+      page: page === undefined ? undefined : Number(page)
+    });
 
     return reply.send({ success: true, ...result });
   });
 
   app.get("/admin/support/conversations/:id/messages", { preHandler: [requireAdmin] }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const { limit, offset } = req.query as { limit?: string; offset?: string };
+    const { limit, offset, page } = req.query as {
+      limit?: string;
+      offset?: string;
+      page?: string;
+    };
 
     const conversation = await getConversationById(id);
     if (!conversation) {
@@ -78,11 +87,11 @@ export const adminPaymentRoutes = async (app: FastifyInstance) => {
 
     await markConversationReadForAdmin(id);
 
-    const result = await getConversationMessages(
-      id,
-      limit === undefined ? undefined : Number(limit),
-      offset === undefined ? undefined : Number(offset)
-    );
+    const result = await getConversationMessages(id, {
+      limit: limit === undefined ? undefined : Number(limit),
+      offset: offset === undefined ? undefined : Number(offset),
+      page: page === undefined ? undefined : Number(page)
+    });
 
     return reply.send({
       success: true,

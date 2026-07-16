@@ -110,13 +110,17 @@ export const notificationRoutes = async (app: FastifyInstance) => {
   });
 
   app.get("/support/conversation/messages", { preHandler: [requireUser] }, async (req, reply) => {
-    const { limit, offset } = req.query as { limit?: string; offset?: string };
+    const { limit, offset, page } = req.query as {
+      limit?: string;
+      offset?: string;
+      page?: string;
+    };
     const conversation = await getOrCreateUserConversation(req.user.id);
-    const result = await getConversationMessages(
-      conversation.id,
-      limit === undefined ? undefined : Number(limit),
-      offset === undefined ? undefined : Number(offset)
-    );
+    const result = await getConversationMessages(conversation.id, {
+      limit: limit === undefined ? undefined : Number(limit),
+      offset: offset === undefined ? undefined : Number(offset),
+      page: page === undefined ? undefined : Number(page)
+    });
 
     return reply.send({
       success: true,

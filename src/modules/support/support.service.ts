@@ -41,10 +41,46 @@ export const ensureSupportSchema = async () => {
   await ensureSchemaPromise;
 };
 
-const normalizePagination = (limit?: number, offset?: number) => ({
-  limit: Math.min(Math.max(Number(limit ?? 30), 1), 100),
-  offset: Math.max(Number(offset ?? 0), 0)
-});
+type PaginationInput = {
+  limit?: number;
+  offset?: number;
+  page?: number;
+  defaultLimit?: number;
+};
+
+const normalizePagination = (input: PaginationInput = {}) => {
+  const defaultLimit = input.defaultLimit ?? 30;
+  const limit = Math.min(Math.max(Number(input.limit ?? defaultLimit) || defaultLimit, 1), 100);
+
+  let offset = Math.max(Number(input.offset ?? 0) || 0, 0);
+  let page = Math.max(Number(input.page ?? 0) || 0, 0);
+
+  if (page > 0) {
+    offset = (page - 1) * limit;
+  } else {
+    page = Math.floor(offset / limit) + 1;
+  }
+
+  return { limit, offset, page };
+};
+
+const buildPaginationMeta = (
+  pagination: { limit: number; offset: number; page: number },
+  total: number,
+  returnedCount: number
+) => {
+  const totalPages = total === 0 ? 0 : Math.ceil(total / pagination.limit);
+
+  return {
+    page: pagination.page,
+    limit: pagination.limit,
+    offset: pagination.offset,
+    total,
+    total_pages: totalPages,
+    has_more: pagination.offset + returnedCount < total,
+    has_previous: pagination.offset > 0
+  };
+};
 
 const normalizeText = (value: unknown) => {
   if (typeof value !== "string") return null;
@@ -187,9 +223,16 @@ export const getConversationById = async (conversationId: string) => {
   return formatConversationForAdmin(row);
 };
 
-export const listAdminConversations = async (limit?: number, offset?: number) => {
+export const listAdminConversations = async (options?: {
+  limit?: number;
+  offset?: number;
+  page?: number;
+}) => {
   await ensureSupportSchema();
-  const pagination = normalizePagination(limit, offset);
+  const pagination = normalizePagination({
+    ...options,
+    defaultLimit: 50
+  });
 
   const result = await pool.query(
     `
@@ -215,7 +258,12 @@ export const listAdminConversations = async (limit?: number, offset?: number) =>
           AND sm.read_at IS NULL
       ) AS unread_count
     FROM support_conversations sc
-    JOIN users u ON u.id = sc.user_id
+    LEFT JOIN users u ON u.id = sc.user_id
+    WHERE EXISTS (
+      SELECT 1
+      FROM support_messages sm
+      WHERE sm.conversation_id = sc.id
+    )
     ORDER BY COALESCE(sc.last_message_at, sc.created_at) DESC
     LIMIT $1 OFFSET $2
     `,
@@ -226,22 +274,23 @@ export const listAdminConversations = async (limit?: number, offset?: number) =>
 
   return {
     conversations: result.rows.map((row) => formatConversationForAdmin(row)),
-    pagination: {
-      limit: pagination.limit,
-      offset: pagination.offset,
-      total,
-      has_more: pagination.offset + result.rows.length < total
-    }
+    pagination: buildPaginationMeta(pagination, total, result.rows.length)
   };
 };
 
 export const getConversationMessages = async (
   conversationId: string,
-  limit?: number,
-  offset?: number
+  options?: {
+    limit?: number;
+    offset?: number;
+    page?: number;
+  }
 ) => {
   await ensureSupportSchema();
-  const pagination = normalizePagination(limit, offset);
+  const pagination = normalizePagination({
+    ...options,
+    defaultLimit: 50
+  });
 
   const countRes = await pool.query(
     `SELECT COUNT(*)::INT AS total FROM support_messages WHERE conversation_id = $1`,
@@ -249,31 +298,32 @@ export const getConversationMessages = async (
   );
   const total = Number(countRes.rows[0]?.total ?? 0);
 
+  // Return the newest page by default so long chats still show recent messages.
+  // page/offset move backward through older messages.
   const result = await pool.query(
     `
-    SELECT
-      sm.*,
-      u.firstname AS sender_firstname,
-      u.lastname AS sender_lastname,
-      u.username AS sender_username,
-      u.email AS sender_email
-    FROM support_messages sm
-    LEFT JOIN users u ON u.id = sm.sender_id AND sm.sender_type = 'USER'
-    WHERE sm.conversation_id = $1
-    ORDER BY sm.created_at ASC
-    LIMIT $2 OFFSET $3
+    SELECT *
+    FROM (
+      SELECT
+        sm.*,
+        u.firstname AS sender_firstname,
+        u.lastname AS sender_lastname,
+        u.username AS sender_username,
+        u.email AS sender_email
+      FROM support_messages sm
+      LEFT JOIN users u ON u.id = sm.sender_id AND sm.sender_type = 'USER'
+      WHERE sm.conversation_id = $1
+      ORDER BY sm.created_at DESC
+      LIMIT $2 OFFSET $3
+    ) recent_messages
+    ORDER BY created_at ASC
     `,
     [conversationId, pagination.limit, pagination.offset]
   );
 
   return {
     messages: result.rows.map((row) => formatMessageRow(row)),
-    pagination: {
-      limit: pagination.limit,
-      offset: pagination.offset,
-      total,
-      has_more: pagination.offset + result.rows.length < total
-    }
+    pagination: buildPaginationMeta(pagination, total, result.rows.length)
   };
 };
 
