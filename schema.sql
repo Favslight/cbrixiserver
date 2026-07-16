@@ -420,3 +420,66 @@ ALTER TABLE orders
 ADD COLUMN IF NOT EXISTS external_email VARCHAR(150);
 
 CREATE INDEX IF NOT EXISTS idx_orders_external_email ON orders(external_email);
+
+-- Campaign & Announcement System
+CREATE TABLE IF NOT EXISTS campaigns (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    campaign_type VARCHAR(30) NOT NULL,
+    placement VARCHAR(30) NOT NULL,
+    media_url TEXT,
+    thumbnail_url TEXT,
+    media_public_id TEXT,
+    thumbnail_public_id TEXT,
+    product_id UUID REFERENCES products(id) ON DELETE SET NULL,
+    popup_delay_seconds INTEGER NOT NULL DEFAULT 0,
+    display_duration_seconds INTEGER NOT NULL DEFAULT 15,
+    allow_skip_after_seconds INTEGER NOT NULL DEFAULT 5,
+    priority INTEGER NOT NULL DEFAULT 0,
+    start_date TIMESTAMP NOT NULL,
+    end_date TIMESTAMP NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by UUID,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT campaigns_type_check CHECK (
+        campaign_type IN ('IMAGE', 'VIDEO', 'TEXT', 'PROMOTED_PRODUCT')
+    ),
+    CONSTRAINT campaigns_placement_check CHECK (
+        placement IN (
+            'LANDING_POPUP',
+            'HERO_BANNER',
+            'TOP_BANNER',
+            'BOTTOM_BANNER',
+            'CATEGORY_PAGE',
+            'PRODUCT_PAGE',
+            'SIDEBAR',
+            'FOOTER'
+        )
+    ),
+    CONSTRAINT campaigns_dates_check CHECK (end_date >= start_date)
+);
+
+CREATE TABLE IF NOT EXISTS campaign_views (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    campaign_id UUID NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    session_id VARCHAR(255) NOT NULL,
+    viewed_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_campaigns_active_dates
+ON campaigns(is_active, start_date, end_date);
+
+CREATE INDEX IF NOT EXISTS idx_campaigns_placement_priority
+ON campaigns(placement, priority DESC);
+
+CREATE INDEX IF NOT EXISTS idx_campaigns_product_id
+ON campaigns(product_id);
+
+CREATE INDEX IF NOT EXISTS idx_campaign_views_campaign_id
+ON campaign_views(campaign_id);
+
+CREATE INDEX IF NOT EXISTS idx_campaign_views_viewed_at
+ON campaign_views(viewed_at DESC);

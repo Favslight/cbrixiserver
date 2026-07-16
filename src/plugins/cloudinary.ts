@@ -7,13 +7,21 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_SECRET
 });
 
-export const uploadToCloudinary = async (file: Buffer) => {
-  return new Promise((resolve, reject) => {
+type CloudinaryUploadOptions = {
+  folder?: string;
+  resourceType?: "image" | "video" | "raw" | "auto";
+};
 
+export const uploadToCloudinary = async (
+  file: Buffer,
+  options: CloudinaryUploadOptions = {}
+) => {
+  return new Promise((resolve, reject) => {
     cloudinary.uploader
       .upload_stream(
         {
-          folder: "cbrixi_products"
+          folder: options.folder ?? "cbrixi_products",
+          resource_type: options.resourceType ?? "image"
         },
         (error, result) => {
           if (error) reject(error);
@@ -21,10 +29,12 @@ export const uploadToCloudinary = async (file: Buffer) => {
         }
       )
       .end(file);
-
   });
 };
 
-export const deleteFromCloudinary = async (publicId: string) => {
-  return cloudinary.uploader.destroy(publicId);
+export const deleteFromCloudinary = async (
+  publicId: string,
+  resourceType: "image" | "video" | "raw" | "auto" = "image"
+) => {
+  return cloudinary.uploader.destroy(publicId, { resource_type: resourceType });
 };
