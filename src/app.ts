@@ -21,16 +21,16 @@ import { ensureSupportSchema } from "./modules/support/support.service";
 import { ensureCampaignSchema } from "./modules/campaigns/campaign.service";
 import { ensureReceiptSchema } from "./modules/receipts/receipt.service";
 
+export const app = Fastify ({
+    logger : true,
+    bodyLimit: 100 * 1024 * 1024
+});
+
 startInstallmentReminderJob();
 ensureAdminNotificationSchema().catch((error) => app.log.error(error));
 ensureSupportSchema().catch((error) => app.log.error(error));
 ensureCampaignSchema().catch((error) => app.log.error(error));
 ensureReceiptSchema().catch((error) => app.log.error(error));
-
-export const app = Fastify ({
-    logger : true,
-    bodyLimit: 100 * 1024 * 1024
-});
 
 app.addContentTypeParser(
   "application/json",
