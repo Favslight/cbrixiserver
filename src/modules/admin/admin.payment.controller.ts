@@ -5,6 +5,7 @@ import { sendEmail } from "../email/email.service";
 import { orderApprovedTemplate, orderRejectedTemplate } from "../email/email.templates";
 import { EmailType } from "../email/email.types";
 import { ensureReferralSchema, recordReferralRewardForTransaction } from "../referrals/referral.service";
+import { generateReceiptForPayment } from "../receipts/receipt.service";
 import {
   ensureCbrillianceVerificationColumns,
   markUserCbrillianceEmailVerified,
@@ -324,7 +325,14 @@ export const approvePayment = async (
   await sendPaymentSuccessNotification(txn);
   await recordReferralRewardForTransaction(txn.id);
 
-  return reply.send({ success:true });
+  let receipt = null;
+  try {
+    receipt = await generateReceiptForPayment(id, req.admin?.id ?? null);
+  } catch (error) {
+    console.error("Receipt generation failed after payment approval", error);
+  }
+
+  return reply.send({ success: true, receipt });
 };
 
 export const rejectPayment = async (

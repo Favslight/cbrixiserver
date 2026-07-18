@@ -24,6 +24,12 @@ const getEmailFrom = () => {
 
 const resend = new Resend(getResendApiKey());
 
+export type EmailAttachment = {
+  filename: string;
+  content: Buffer;
+  contentType?: string;
+};
+
 export const sendEmail = async (
   userId: string | null,
   orderId: string | null,
@@ -31,14 +37,23 @@ export const sendEmail = async (
   email: string,
   subject: string,
   html: string,
-  emailType: EmailType
+  emailType: EmailType,
+  attachments?: EmailAttachment[]
 ) => {
-
   const response = await resend.emails.send({
     from: getEmailFrom(),
     to: email,
     subject,
-    html: html.replace(/\n/g, "<br />")
+    html: html.replace(/\n/g, "<br />"),
+    ...(attachments?.length
+      ? {
+          attachments: attachments.map((attachment) => ({
+            filename: attachment.filename,
+            content: attachment.content,
+            contentType: attachment.contentType
+          }))
+        }
+      : {})
   });
 
   if (response.error) {
@@ -65,18 +80,14 @@ export const sendEmail = async (
     throw new Error("Email failed to send: Resend returned no message id");
   }
 
-  await pool.query(`
+  await pool.query(
+    `
     INSERT INTO email_logs
     (user_id, order_id, installment_id, email_type)
     VALUES ($1,$2,$3,$4)
   `,
-  [
-    userId,
-    orderId,
-    installmentId,
-    emailType
-  ]);
+    [userId, orderId, installmentId, emailType]
+  );
 
   return response.data;
-
 };

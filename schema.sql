@@ -483,3 +483,45 @@ ON campaign_views(campaign_id);
 
 CREATE INDEX IF NOT EXISTS idx_campaign_views_viewed_at
 ON campaign_views(viewed_at DESC);
+
+-- Receipt Management System
+CREATE TABLE IF NOT EXISTS receipts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    receipt_number VARCHAR(64) NOT NULL UNIQUE,
+    invoice_number VARCHAR(255) NOT NULL,
+    order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    payment_id UUID NOT NULL UNIQUE REFERENCES payment_transactions(id) ON DELETE CASCADE,
+    customer_id UUID NOT NULL REFERENCES users(id),
+    amount_paid NUMERIC(15,2) NOT NULL,
+    remaining_balance NUMERIC(15,2) NOT NULL DEFAULT 0,
+    order_total NUMERIC(15,2) NOT NULL DEFAULT 0,
+    subtotal NUMERIC(15,2) NOT NULL DEFAULT 0,
+    discount_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+    delivery_fee NUMERIC(15,2) NOT NULL DEFAULT 0,
+    payment_method VARCHAR(50) NOT NULL,
+    generated_by UUID,
+    generated_at TIMESTAMP DEFAULT NOW(),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS receipt_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    receipt_id UUID NOT NULL REFERENCES receipts(id) ON DELETE CASCADE,
+    product_id UUID REFERENCES products(id) ON DELETE SET NULL,
+    product_name VARCHAR(255) NOT NULL,
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    unit_price NUMERIC(15,2) NOT NULL,
+    subtotal NUMERIC(15,2) NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS receipt_number_counters (
+    day_key VARCHAR(8) PRIMARY KEY,
+    last_value INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_receipts_order_id ON receipts(order_id);
+CREATE INDEX IF NOT EXISTS idx_receipts_customer_id ON receipts(customer_id);
+CREATE INDEX IF NOT EXISTS idx_receipts_invoice_number ON receipts(invoice_number);
+CREATE INDEX IF NOT EXISTS idx_receipts_generated_at ON receipts(generated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_receipt_items_receipt_id ON receipt_items(receipt_id);

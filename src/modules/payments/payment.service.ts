@@ -7,6 +7,7 @@ import { generateInvoiceNumber } from "./invoice.service";
 import { initializePaystackPayment, verifyPaystackPayment } from "./paystack.service";
 import { recordReferralRewardForTransaction } from "../referrals/referral.service";
 import { notifyStaffOfPayment } from "../admin-notifications/adminNotification.service";
+import { generateReceiptForPayment } from "../receipts/receipt.service";
 
 export const initiatePaystackPayment = async (
   user: any,
@@ -89,6 +90,12 @@ export const verifyPaystack = async (reference: string) => {
   await applyPayment(txn);
   await sendPaymentSuccessNotification(txn);
   await recordReferralRewardForTransaction(txn.id);
+
+  try {
+    await generateReceiptForPayment(txn.id, null);
+  } catch (error) {
+    console.error("Receipt generation failed after Paystack verify", error);
+  }
 
   return true;
 };
