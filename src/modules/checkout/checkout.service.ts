@@ -38,6 +38,20 @@ export const createOrderFromCart = async (
   const cartItems = await getCart(user.id);
   if (!cartItems.length) throw new Error("Cart is empty");
 
+  const cartItemCount = await pool.query(
+    `
+    SELECT COUNT(*)::INTEGER AS item_count
+    FROM carts
+    JOIN cart_items ON cart_items.cart_id = carts.id
+    WHERE carts.user_id = $1
+    `,
+    [user.id]
+  );
+
+  if (Number(cartItemCount.rows[0]?.item_count ?? 0) !== cartItems.length) {
+    throw new Error("One or more products in your cart are no longer available");
+  }
+
   if (!["FULL", "INSTALLMENT"].includes(paymentMode)) {
     throw new Error("Invalid payment mode");
   }

@@ -990,6 +990,125 @@ export const reorderHomepageProducts = async (productIds: string[]) => {
   }
 };
 
+export const bulkUpdateProductPurchaseSettings = async (data: any) => {
+  await ensureProductColumns();
+
+  if (!data || typeof data !== "object") {
+    throw new Error("Update payload is required");
+  }
+
+  const hasDepositUpdate = data.minimum_deposit_percentage !== undefined;
+  const hasDiscountUpdate = data.discount_enabled !== undefined;
+
+  if (!hasDepositUpdate && !hasDiscountUpdate) {
+    throw new Error("No update fields provided");
+  }
+
+  let minimumDepositPercentage: number | null = null;
+  if (hasDepositUpdate) {
+    minimumDepositPercentage = Number(data.minimum_deposit_percentage);
+    if (
+      !Number.isInteger(minimumDepositPercentage)
+      || minimumDepositPercentage < 0
+      || minimumDepositPercentage > 100
+    ) {
+      throw new Error("minimum_deposit_percentage must be an integer between 0 and 100");
+    }
+  }
+
+  const discountEnabled = hasDiscountUpdate ? data.discount_enabled === true : null;
+  const discountPercentage = discountEnabled
+    ? Number(data.discount_percentage ?? 0)
+    : 0;
+
+  if (
+    discountEnabled === true
+    && (!Number.isFinite(discountPercentage) || discountPercentage <= 0 || discountPercentage > 100)
+  ) {
+    throw new Error("discount_percentage must be greater than 0 and less than or equal to 100 when discount is active");
+  }
+
+  const result = await pool.query(
+    `
+    UPDATE products
+    SET minimum_deposit_percentage = CASE
+          WHEN $1::BOOLEAN THEN $2::INTEGER
+          ELSE minimum_deposit_percentage
+        END,
+        discount_enabled = CASE
+          WHEN $3::BOOLEAN THEN $4::BOOLEAN
+          ELSE discount_enabled
+        END,
+        discount_percentage = CASE
+          WHEN $3::BOOLEAN THEN $5::NUMERIC
+          ELSE discount_percentage
+        END,
+        discount_amount = CASE
+          WHEN $3::BOOLEAN THEN
+            CASE WHEN $4::BOOLEAN THEN ROUND((price * $5::NUMERIC) / 100, 2) ELSE 0 END
+          ELSE discount_amount
+        END,
+        discounted_price = CASE
+          WHEN $3::BOOLEAN THEN
+            CASE WHEN $4::BOOLEAN THEN GREATEST(ROUND(price - ((price * $5::NUMERIC) / 100), 2), 0) ELSE price END
+          ELSE discounted_price
+        END,
+        updated_at = NOW()
+    RETURNING ${productSelectColumns}
+    `,
+    [
+      hasDepositUpdate,
+      minimumDepositPercentage,
+      hasDiscountUpdate,
+      discountEnabled ?? false,
+      roundMoney(discountPercentage)
+    ]
+  );
+
+  return attachVariants(result.rows, true);
+};
+
+export const markProductOutOfStock = async (id: string) => {
+  await ensureProductColumns();
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const result = await client.query(
+      `
+      UPDATE products
+      SET is_active = FALSE,
+          display_order = NULL,
+          updated_at = NOW()
+      WHERE id=$1
+      RETURNING ${productSelectColumns}
+      `,
+      [id]
+    );
+
+    if (!result.rows[0]) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    await client.query(
+      `UPDATE product_variants SET is_active=FALSE, updated_at=NOW() WHERE product_id=$1`,
+      [id]
+    );
+
+    await client.query("COMMIT");
+    const [product] = await attachVariants([result.rows[0]], true);
+    return product;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
 export const getActiveProducts = async () => {
   await ensureProductColumns();
 

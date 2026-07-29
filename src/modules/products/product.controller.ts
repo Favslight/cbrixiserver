@@ -1,6 +1,6 @@
 // src/modules/products/product.controller.ts
 import { FastifyRequest, FastifyReply } from "fastify";
-import { calculateProductDiscount, createProduct, deleteProduct, getActiveProducts, getActiveProductsByCategory, getAllProducts, reorderHomepageProducts, updateProduct } from "./product.service";
+import { bulkUpdateProductPurchaseSettings, calculateProductDiscount, createProduct, deleteProduct, getActiveProducts, getActiveProductsByCategory, getAllProducts, markProductOutOfStock, reorderHomepageProducts, updateProduct } from "./product.service";
 import { uploadToCloudinary } from "../../plugins/cloudinary";
 
 const MAX_PRODUCT_IMAGES = 7;
@@ -449,6 +449,80 @@ export const reorderHomepageProductsController = async (
 
     req.log.error(error);
     return reply.status(500).send({ message: "Failed to reorder products" });
+  }
+};
+
+export const bulkUpdateProductPurchaseSettingsController = async (
+  req: FastifyRequest,
+  reply: FastifyReply
+) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const depositValue = body.minimum_deposit_percentage !== undefined
+    ? body.minimum_deposit_percentage
+    : body.minimumDepositPercentage;
+  const discountEnabledValue = body.discount_enabled !== undefined
+    ? String(body.discount_enabled)
+    : body.discountEnabled !== undefined
+      ? String(body.discountEnabled)
+      : undefined;
+  const discountPercentageValue = body.discount_percentage !== undefined
+    ? String(body.discount_percentage)
+    : body.discountPercentage !== undefined
+      ? String(body.discountPercentage)
+      : undefined;
+  const parsedDiscountEnabled = parseOptionalBoolean(discountEnabledValue);
+  const parsedDiscountPercentage = parseNumberField(discountPercentageValue);
+
+  if (parsedDiscountEnabled === null) {
+    return reply.status(400).send({ message: "discount_enabled must be true or false" });
+  }
+
+  if (parsedDiscountPercentage === null) {
+    return reply.status(400).send({ message: "discount_percentage must be a valid number" });
+  }
+
+  try {
+    const products = await bulkUpdateProductPurchaseSettings({
+      minimum_deposit_percentage: depositValue,
+      discount_enabled: parsedDiscountEnabled,
+      discount_percentage: parsedDiscountPercentage
+    });
+
+    return reply.send({
+      success: true,
+      updated_count: products.length,
+      products
+    });
+  } catch (error: any) {
+    if (
+      error?.message === "Update payload is required"
+      || error?.message === "No update fields provided"
+      || error?.message === "minimum_deposit_percentage must be an integer between 0 and 100"
+      || error?.message === "discount_percentage must be greater than 0 and less than or equal to 100 when discount is active"
+    ) {
+      return reply.status(400).send({ message: error.message });
+    }
+
+    req.log.error(error);
+    return reply.status(500).send({ message: "Failed to update product purchase settings" });
+  }
+};
+
+export const markProductOutOfStockController = async (
+  req: FastifyRequest<{ Params: { id: string } }>,
+  reply: FastifyReply
+) => {
+  try {
+    const product = await markProductOutOfStock(req.params.id);
+
+    if (!product) {
+      return reply.status(404).send({ message: "Product not found" });
+    }
+
+    return reply.send({ success: true, product });
+  } catch (error) {
+    req.log.error(error);
+    return reply.status(500).send({ message: "Failed to mark product out of stock" });
   }
 };
 

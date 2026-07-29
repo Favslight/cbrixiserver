@@ -1,6 +1,6 @@
 // src/modules/products/product.routes.ts
 import { FastifyInstance } from "fastify";
-import { createProductController, deleteProductController, getProductsController, getPublicProductsByCategoryController, getPublicProductsController, previewProductDiscountController, reorderHomepageProductsController, updateProductController } from "./product.controller";
+import { bulkUpdateProductPurchaseSettingsController, createProductController, deleteProductController, getProductsController, getPublicProductsByCategoryController, getPublicProductsController, markProductOutOfStockController, previewProductDiscountController, reorderHomepageProductsController, updateProductController } from "./product.controller";
 import { requireAdmin } from "../admin/admin.auth";
 
 export async function productRoutes(app: FastifyInstance) {
@@ -20,6 +20,16 @@ export async function productRoutes(app: FastifyInstance) {
   app.patch("/admin/products/display-order",
     { preHandler: [requireAdmin] },
     reorderHomepageProductsController);
+
+  app.patch("/admin/products/purchase-settings",
+    { preHandler: [requireAdmin] },
+    bulkUpdateProductPurchaseSettingsController);
+
+  app.patch<{ Params: { id: string } }>(
+    "/admin/products/:id/out-of-stock",
+    { preHandler: [requireAdmin] },
+    markProductOutOfStockController
+  );
 
     app.delete<{ Params: { id: string } }>(
   "/admin/products/:id",
