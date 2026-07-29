@@ -175,7 +175,9 @@ const assertProductExists = async (productId: string) => {
     `
     SELECT ${productSummarySelect}
     FROM products p
-    WHERE p.id = $1 AND p.is_active = TRUE
+    WHERE p.id = $1
+      AND p.is_active = TRUE
+      AND COALESCE(p.in_stock, TRUE) = TRUE
     `,
     [productId]
   );
@@ -213,7 +215,10 @@ const campaignSelectSql = `
       ELSE p.price
     END AS product_effective_price
   FROM campaigns c
-  LEFT JOIN products p ON p.id = c.product_id
+  LEFT JOIN products p
+    ON p.id = c.product_id
+   AND p.is_active = TRUE
+   AND COALESCE(p.in_stock, TRUE) = TRUE
   LEFT JOIN (
     SELECT campaign_id, COUNT(*)::INT AS view_count
     FROM campaign_views

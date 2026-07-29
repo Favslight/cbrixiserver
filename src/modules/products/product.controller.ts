@@ -1,6 +1,6 @@
 // src/modules/products/product.controller.ts
 import { FastifyRequest, FastifyReply } from "fastify";
-import { bulkUpdateProductPurchaseSettings, calculateProductDiscount, createProduct, deleteProduct, getActiveProducts, getActiveProductsByCategory, getAllProducts, markProductOutOfStock, reorderHomepageProducts, updateProduct } from "./product.service";
+import { bulkUpdateProductPurchaseSettings, calculateProductDiscount, createProduct, deleteProduct, getActiveProducts, getActiveProductsByCategory, getAllProducts, markProductInStock, markProductOutOfStock, reorderHomepageProducts, updateProduct } from "./product.service";
 import { uploadToCloudinary } from "../../plugins/cloudinary";
 
 const MAX_PRODUCT_IMAGES = 7;
@@ -523,6 +523,24 @@ export const markProductOutOfStockController = async (
   } catch (error) {
     req.log.error(error);
     return reply.status(500).send({ message: "Failed to mark product out of stock" });
+  }
+};
+
+export const markProductInStockController = async (
+  req: FastifyRequest<{ Params: { id: string } }>,
+  reply: FastifyReply
+) => {
+  try {
+    const product = await markProductInStock(req.params.id);
+
+    if (!product) {
+      return reply.status(404).send({ message: "Product not found" });
+    }
+
+    return reply.send({ success: true, product });
+  } catch (error) {
+    req.log.error(error);
+    return reply.status(500).send({ message: "Failed to mark product in stock" });
   }
 };
 

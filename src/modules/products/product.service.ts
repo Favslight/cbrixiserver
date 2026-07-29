@@ -92,6 +92,7 @@ export const ensureProductColumns = async () => {
         ADD COLUMN IF NOT EXISTS installment_enabled BOOLEAN DEFAULT FALSE,
         ADD COLUMN IF NOT EXISTS minimum_deposit_percentage INTEGER DEFAULT 50,
         ADD COLUMN IF NOT EXISTS installment_duration_months INTEGER,
+        ADD COLUMN IF NOT EXISTS in_stock BOOLEAN DEFAULT TRUE,
         ADD COLUMN IF NOT EXISTS display_order INTEGER
       `);
 
@@ -256,6 +257,7 @@ const productSelectColumns = `
   installment_enabled,
   minimum_deposit_percentage,
   installment_duration_months,
+  COALESCE(in_stock, TRUE) AS in_stock,
   display_order,
   is_active,
   created_at,
@@ -1071,42 +1073,43 @@ export const bulkUpdateProductPurchaseSettings = async (data: any) => {
 export const markProductOutOfStock = async (id: string) => {
   await ensureProductColumns();
 
-  const client = await pool.connect();
+  const result = await pool.query(
+    `
+    UPDATE products
+    SET in_stock = FALSE,
+        updated_at = NOW()
+    WHERE id=$1
+      AND is_active = TRUE
+    RETURNING ${productSelectColumns}
+    `,
+    [id]
+  );
 
-  try {
-    await client.query("BEGIN");
+  if (!result.rows[0]) return null;
 
-    const result = await client.query(
-      `
-      UPDATE products
-      SET is_active = FALSE,
-          display_order = NULL,
-          updated_at = NOW()
-      WHERE id=$1
-      RETURNING ${productSelectColumns}
-      `,
-      [id]
-    );
+  const [product] = await attachVariants([result.rows[0]], true);
+  return product;
+};
 
-    if (!result.rows[0]) {
-      await client.query("ROLLBACK");
-      return null;
-    }
+export const markProductInStock = async (id: string) => {
+  await ensureProductColumns();
 
-    await client.query(
-      `UPDATE product_variants SET is_active=FALSE, updated_at=NOW() WHERE product_id=$1`,
-      [id]
-    );
+  const result = await pool.query(
+    `
+    UPDATE products
+    SET in_stock = TRUE,
+        updated_at = NOW()
+    WHERE id=$1
+      AND is_active = TRUE
+    RETURNING ${productSelectColumns}
+    `,
+    [id]
+  );
 
-    await client.query("COMMIT");
-    const [product] = await attachVariants([result.rows[0]], true);
-    return product;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  if (!result.rows[0]) return null;
+
+  const [product] = await attachVariants([result.rows[0]], true);
+  return product;
 };
 
 export const getActiveProducts = async () => {
@@ -1132,9 +1135,11 @@ export const getActiveProducts = async () => {
            installment_enabled,
            minimum_deposit_percentage,
            installment_duration_months,
+           COALESCE(in_stock, TRUE) AS in_stock,
            display_order
     FROM products
     WHERE is_active = true
+      AND COALESCE(in_stock, TRUE) = TRUE
     ORDER BY ${homepageProductOrderClause}
   `);
 
@@ -1170,9 +1175,11 @@ export const getActiveProductsByCategory = async (category: string) => {
            installment_enabled,
            minimum_deposit_percentage,
            installment_duration_months,
+           COALESCE(in_stock, TRUE) AS in_stock,
            display_order
     FROM products
     WHERE is_active = true
+      AND COALESCE(in_stock, TRUE) = TRUE
       AND LOWER(category) = LOWER($1)
     ORDER BY created_at DESC
     `,

@@ -37,6 +37,7 @@ CREATE TABLE products (
     installment_enabled BOOLEAN DEFAULT FALSE,
     minimum_deposit_percentage INTEGER DEFAULT 50,
     installment_duration_months INTEGER,
+    in_stock BOOLEAN DEFAULT TRUE,
     display_order INTEGER,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),

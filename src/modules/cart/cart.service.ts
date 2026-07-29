@@ -21,6 +21,7 @@ const resolveProductVariant = async (
       p.id AS product_id,
       p.name AS product_name,
       p.is_active AS product_is_active,
+      COALESCE(p.in_stock, TRUE) AS product_in_stock,
       pv.id AS variant_id,
       pv.name AS variant_name,
       pv.is_active AS variant_is_active
@@ -36,7 +37,7 @@ const resolveProductVariant = async (
 
   const row = result.rows[0];
 
-  if (!row || !row.product_is_active || !row.variant_is_active) {
+  if (!row || !row.product_is_active || !row.product_in_stock || !row.variant_is_active) {
     throw new Error("Product variant not found");
   }
 
@@ -135,13 +136,15 @@ export const getCart = async (userId: string) => {
       products.image_urls,
       products.installment_enabled,
       products.installment_duration_months,
-      products.minimum_deposit_percentage
+      products.minimum_deposit_percentage,
+      COALESCE(products.in_stock, TRUE) AS in_stock
     FROM carts
     JOIN cart_items ON carts.id = cart_items.cart_id
     JOIN products ON products.id = cart_items.product_id
     JOIN product_variants pv ON pv.id = cart_items.variant_id
     WHERE carts.user_id = $1
       AND products.is_active = TRUE
+      AND COALESCE(products.in_stock, TRUE) = TRUE
       AND pv.is_active = TRUE
     `,
     [userId]

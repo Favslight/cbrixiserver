@@ -37,7 +37,8 @@ const partnerProductSelect = `
       THEN ARRAY[p.image_url]
     ELSE ARRAY[]::TEXT[]
   END AS images,
-  'ACTIVE' AS status,
+  COALESCE(p.in_stock, TRUE) AS in_stock,
+  CASE WHEN COALESCE(p.in_stock, TRUE) THEN 'ACTIVE' ELSE 'OUT_OF_STOCK' END AS status,
   p.created_at
 `;
 
@@ -46,7 +47,7 @@ export const getPartnerProducts = async (
 ) => {
   await ensureProductColumns();
 
-  const conditions = ["p.is_active = TRUE"];
+  const conditions = ["p.is_active = TRUE", "COALESCE(p.in_stock, TRUE) = TRUE"];
   const values: unknown[] = [];
 
   if (filters.category) {
@@ -119,6 +120,7 @@ export const getPartnerProductById = async (id: string) => {
      FROM products p
      WHERE p.id = $1
        AND p.is_active = TRUE
+       AND COALESCE(p.in_stock, TRUE) = TRUE
      LIMIT 1`,
     [id]
   );
