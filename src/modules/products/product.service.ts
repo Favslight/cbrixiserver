@@ -760,6 +760,25 @@ export const getAllProducts = async () => {
   return attachVariants(result.rows, true);
 };
 
+export const getAdminProductById = async (id: string) => {
+  await ensureProductColumns();
+
+  const result = await pool.query(
+    `
+    SELECT ${productSelectColumns}
+    FROM products
+    WHERE id=$1
+      AND is_active = true
+    `,
+    [id]
+  );
+
+  if (!result.rows[0]) return null;
+
+  const [product] = await attachVariants([result.rows[0]], true);
+  return product;
+};
+
 export const deleteProduct = async (id: string) => {
   await ensureProductColumns();
 

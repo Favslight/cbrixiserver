@@ -1,6 +1,6 @@
 // src/modules/products/product.controller.ts
 import { FastifyRequest, FastifyReply } from "fastify";
-import { bulkUpdateProductPurchaseSettings, calculateProductDiscount, createProduct, deleteProduct, getActiveProducts, getActiveProductsByCategory, getAllProducts, markProductInStock, markProductOutOfStock, reorderHomepageProducts, updateProduct } from "./product.service";
+import { bulkUpdateProductPurchaseSettings, calculateProductDiscount, createProduct, deleteProduct, getActiveProducts, getActiveProductsByCategory, getAdminProductById, getAllProducts, markProductInStock, markProductOutOfStock, reorderHomepageProducts, updateProduct } from "./product.service";
 import { uploadToCloudinary } from "../../plugins/cloudinary";
 
 const MAX_PRODUCT_IMAGES = 7;
@@ -403,6 +403,22 @@ export const getProductsController = async (
     products
   });
 
+};
+
+export const getAdminProductController = async (
+  req: FastifyRequest<{ Params: { id: string } }>,
+  reply: FastifyReply
+) => {
+  const product = await getAdminProductById(req.params.id);
+
+  if (!product) {
+    return reply.status(404).send({ message: "Product not found" });
+  }
+
+  return reply.send({
+    success: true,
+    product
+  });
 };
 
 export const deleteProductController = async (
