@@ -13,7 +13,7 @@ Authorization: Bearer <admin-token>
 ## Admin Users
 
 ```ts
-GET /admin/users/details
+GET /admin/users/details?limit=50&offset=0
 ```
 
 Response:
@@ -21,6 +21,13 @@ Response:
 ```ts
 type AdminUsersResponse = {
   success: true;
+  pagination: {
+    limit: number;
+    offset: number;
+    page: number;
+    total: number;
+    has_more: boolean;
+  };
   users: AdminUser[];
 };
 
@@ -32,6 +39,13 @@ type AdminUser = {
   email: string;
   status?: string | null;
   created_at: string;
+  referral_code?: string | null;
+  referred_by_user_id?: string | null;
+  referral_count: number;
+  referral_balance: number;
+  available_referral_balance: number;
+  pending_referral_payout_balance: number;
+  paid_out_referral_balance: number;
 
   // New display aliases for dashboard tables
   first_name?: string | null;
@@ -47,6 +61,22 @@ type AdminUser = {
 };
 ```
 
+Pagination behavior:
+
+- Default page size is 50 users.
+- The backend caps `limit` at 50, even if a larger value is requested.
+- Use either `offset` or `page`.
+- First page examples: `GET /admin/users/details?limit=50&offset=0` or `GET /admin/users/details?page=1`.
+- Next offset: `pagination.offset + pagination.limit`.
+- Stop loading more pages when `pagination.has_more === false`.
+
+Referral balance fields:
+
+- `referral_balance` and `available_referral_balance` are the withdrawable referral balance.
+- `pending_referral_payout_balance` is referral money currently requested for payout.
+- `paid_out_referral_balance` is referral money already paid.
+- `referral_count` is the number of users referred by this user.
+
 Frontend user-name rule:
 
 ```ts
@@ -59,6 +89,18 @@ const userDisplayName =
 ```
 
 Use `name` or `full_name` in the admin users table so users no longer appear nameless.
+
+Recommended user table columns:
+
+- Customer: `full_name || name || email`
+- Email: `email`
+- Referral code: `referral_code`
+- Referrals: `referral_count`
+- Referral balance: `referral_balance`
+- Pending payout: `pending_referral_payout_balance`
+- Paid out: `paid_out_referral_balance`
+- Status: `status`
+- Date joined: `created_at`
 
 ## Admin Orders
 

@@ -6,5 +6,9 @@ export const adminRoutes = async (app: FastifyInstance) =>
 {
     app.post("/admin/login", adminLoginHandler);
 
-    app.get("/admin/users/details", { preHandler: [requireAdmin] }, getAllUsersDetailsController);
+    app.get<{ Querystring: { limit?: string; offset?: string; page?: string } }>(
+        "/admin/users/details",
+        { preHandler: [requireAdmin] },
+        getAllUsersDetailsController
+    );
 }

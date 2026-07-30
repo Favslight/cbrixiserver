@@ -159,6 +159,53 @@ Frontend behavior:
 - On public product pages, refresh product data after admin changes; out-of-stock products will no longer appear in public listings.
 - Disable buy/add-to-cart buttons if a product object is ever rendered with `in_stock === false`.
 
+## Fetch Admin Product Detail
+
+Use this endpoint when admin needs to view, edit, or recover a product by ID. Unlike public product endpoints, this endpoint returns active products even when `in_stock === false`.
+
+```http
+GET /admin/products/:id
+Authorization: Bearer <admin-token>
+```
+
+Response:
+
+```ts
+type GetAdminProductResponse = {
+  success: true;
+  product: Product;
+};
+```
+
+Example:
+
+```json
+{
+  "success": true,
+  "product": {
+    "id": "product-uuid",
+    "name": "Product name",
+    "is_active": true,
+    "in_stock": false,
+    "variants": []
+  }
+}
+```
+
+Frontend behavior:
+
+- Use `GET /admin/products` for the main admin product list. That list includes active out-of-stock products.
+- Use `GET /admin/products/:id` for product detail/edit pages, direct links, stale local state recovery, or after a product disappears from public listings.
+- Do not use public `GET /products` or `GET /products/category/:category` for admin inventory management, because those endpoints intentionally exclude out-of-stock products.
+- If `product.in_stock === false`, keep the product visible in admin and show a `Put back in stock` action wired to `PATCH /admin/products/:id/in-stock`.
+- If this endpoint returns 404, treat the product as deleted or inactive, not merely out of stock.
+
+Not found response:
+
+```json
+{ "message": "Product not found" }
+```
+
 ## Put Product Back In Stock
 
 Use this endpoint when admin wants to make an out-of-stock product purchasable again.

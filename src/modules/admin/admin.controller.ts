@@ -3,6 +3,7 @@ import { adminLoginService } from "./admin.service";
 import { pool } from "../../config/db";
 import { ensureCbrillianceVerificationColumns } from "../users/cbrillianceVerification.service";
 import { ensureProductColumns } from "../products/product.service";
+import { ensureReferralSchema } from "../referrals/referral.service";
 import {
   getAdminOrderItems,
   getOrderItemSummary,
@@ -13,6 +14,28 @@ interface AdminLoginBody {
   email: string;
   password: string;
 }
+
+type AdminUsersQuery = {
+  limit?: string;
+  offset?: string;
+  page?: string;
+};
+
+const ADMIN_USERS_PAGE_SIZE = 50;
+
+const parseNonNegativeInteger = (value: unknown) => {
+  if (value === undefined || value === null || value === "") return null;
+
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : Number.NaN;
+};
+
+const parsePositiveInteger = (value: unknown) => {
+  if (value === undefined || value === null || value === "") return null;
+
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : Number.NaN;
+};
 
 export const adminLoginHandler = async (
   request: FastifyRequest<{ Body: AdminLoginBody }>,
@@ -37,12 +60,37 @@ export const adminLoginHandler = async (
 };
 
 export const getAllUsersDetailsController = async (
-  req: FastifyRequest,
+  req: FastifyRequest<{ Querystring: AdminUsersQuery }>,
   reply: FastifyReply
 ) => {
   try {
     await ensureCbrillianceVerificationColumns();
     await ensureProductColumns();
+    await ensureReferralSchema();
+
+    const requestedLimit = parsePositiveInteger(req.query.limit);
+    const requestedOffset = parseNonNegativeInteger(req.query.offset);
+    const requestedPage = parseNonNegativeInteger(req.query.page);
+
+    if (Number.isNaN(requestedLimit)) {
+      return reply.status(400).send({ success: false, message: "limit must be a positive integer" });
+    }
+
+    if (Number.isNaN(requestedOffset)) {
+      return reply.status(400).send({ success: false, message: "offset must be a non-negative integer" });
+    }
+
+    if (Number.isNaN(requestedPage) || requestedPage === 0) {
+      return reply.status(400).send({ success: false, message: "page must be a positive integer" });
+    }
+
+    const limit = Math.min(requestedLimit ?? ADMIN_USERS_PAGE_SIZE, ADMIN_USERS_PAGE_SIZE);
+    const offset = requestedOffset ?? (requestedPage ? (requestedPage - 1) * limit : 0);
+
+    const totalUsersRes = await pool.query(`
+      SELECT COUNT(*)::INTEGER AS total
+      FROM users
+    `);
 
     const usersRes = await pool.query(`
       SELECT
@@ -51,6 +99,9 @@ export const getAllUsersDetailsController = async (
         lastname,
         username,
         email,
+        referral_code,
+        referred_by_user_id,
+        referral_count,
         cbrilliance_email,
         cbrilliance_email_verified,
         cbrilliance_email_verified_at,
@@ -58,13 +109,39 @@ export const getAllUsersDetailsController = async (
         created_at
       FROM users
       ORDER BY created_at DESC
-    `);
+      LIMIT $1 OFFSET $2
+    `, [limit, offset]);
     const users = usersRes.rows;
+    const userIds = users.map((user) => user.id);
+
+    const referralBalancesRes = userIds.length
+      ? await pool.query(
+          `
+          SELECT
+            referrer_id,
+            COALESCE(SUM(reward_amount) FILTER (WHERE status = 'AVAILABLE'), 0) AS available_balance,
+            COALESCE(SUM(reward_amount) FILTER (WHERE status = 'REQUESTED'), 0) AS pending_payout_balance,
+            COALESCE(SUM(reward_amount) FILTER (WHERE status = 'PAID'), 0) AS paid_out_balance
+          FROM referral_rewards
+          WHERE referrer_id = ANY($1::UUID[])
+          GROUP BY referrer_id
+          `,
+          [userIds]
+        )
+      : { rows: [] };
+    const referralBalancesByUserId = new Map(
+      referralBalancesRes.rows.map((row) => [row.referrer_id, row])
+    );
 
     // Fetch orders, order items, installments for each user
     const usersWithDetails = [];
 
     for (const user of users) {
+      const referralBalance = referralBalancesByUserId.get(user.id) as any;
+      const availableReferralBalance = Number(referralBalance?.available_balance ?? 0);
+      const pendingReferralPayoutBalance = Number(referralBalance?.pending_payout_balance ?? 0);
+      const paidOutReferralBalance = Number(referralBalance?.paid_out_balance ?? 0);
+
       const ordersRes = await pool.query(
         `
         SELECT
@@ -192,12 +269,23 @@ export const getAllUsersDetailsController = async (
 
       usersWithDetails.push({
         ...withAdminUserDisplayFields(user),
+        referral_balance: availableReferralBalance,
+        available_referral_balance: availableReferralBalance,
+        pending_referral_payout_balance: pendingReferralPayoutBalance,
+        paid_out_referral_balance: paidOutReferralBalance,
         orders: detailedOrders
       });
     }
 
     return reply.send({
       success: true,
+      pagination: {
+        limit,
+        offset,
+        page: Math.floor(offset / limit) + 1,
+        total: Number(totalUsersRes.rows[0]?.total ?? 0),
+        has_more: offset + usersWithDetails.length < Number(totalUsersRes.rows[0]?.total ?? 0)
+      },
       users: usersWithDetails
     });
   } catch (error: any) {
