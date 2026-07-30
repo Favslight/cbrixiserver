@@ -485,6 +485,41 @@ ON campaign_views(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_campaign_views_viewed_at
 ON campaign_views(viewed_at DESC);
 
+CREATE TABLE IF NOT EXISTS hero_carousel_slides (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    eyebrow VARCHAR(120),
+    title VARCHAR(255) NOT NULL,
+    subtitle VARCHAR(255),
+    description TEXT,
+    image_url TEXT NOT NULL,
+    image_public_id TEXT,
+    mobile_image_url TEXT,
+    mobile_image_public_id TEXT,
+    alt_text VARCHAR(255),
+    link_url TEXT,
+    product_id UUID REFERENCES products(id) ON DELETE SET NULL,
+    badge_text VARCHAR(120),
+    accent_color VARCHAR(40),
+    text_position VARCHAR(10) NOT NULL DEFAULT 'LEFT',
+    display_order INTEGER NOT NULL DEFAULT 0,
+    autoplay_seconds INTEGER NOT NULL DEFAULT 6,
+    start_date TIMESTAMP,
+    end_date TIMESTAMP,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by UUID,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT hero_carousel_text_position_check CHECK (text_position IN ('LEFT', 'CENTER', 'RIGHT')),
+    CONSTRAINT hero_carousel_dates_check CHECK (end_date IS NULL OR start_date IS NULL OR end_date >= start_date),
+    CONSTRAINT hero_carousel_autoplay_check CHECK (autoplay_seconds > 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_hero_carousel_active_dates
+ON hero_carousel_slides(is_active, start_date, end_date);
+
+CREATE INDEX IF NOT EXISTS idx_hero_carousel_order
+ON hero_carousel_slides(display_order ASC, created_at DESC);
+
 -- Receipt Management System
 CREATE TABLE IF NOT EXISTS receipts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
