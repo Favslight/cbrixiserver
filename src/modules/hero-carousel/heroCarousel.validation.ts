@@ -48,11 +48,14 @@ export const adminHeroSlidesQuerySchema = z.object({
 
 const heroSlideBaseSchema = z.object({
   eyebrow: nullableTrimmedString,
-  title: z.string().trim().min(1).max(255),
+  title: nullableTrimmedString,
   subtitle: nullableTrimmedString,
   description: nullableTrimmedString,
+  media_type: z.enum(["IMAGE", "VIDEO"]).default("IMAGE"),
   image_url: optionalTrimmedString,
   mobile_image_url: nullableTrimmedString,
+  video_url: nullableTrimmedString,
+  mobile_video_url: nullableTrimmedString,
   alt_text: nullableTrimmedString,
   link_url: nullableTrimmedString,
   product_id: nullableUuid,
@@ -81,7 +84,7 @@ export const createHeroSlideSchema = refineHeroSlideRules(heroSlideBaseSchema);
 
 export const updateHeroSlideSchema = refineHeroSlideRules(
   heroSlideBaseSchema.partial().extend({
-    title: z.string().trim().min(1).max(255).optional(),
+    title: nullableTrimmedString,
     product_id: nullableUuid.or(optionalUuid),
     is_active: optionalBoolean
   })

@@ -1,13 +1,18 @@
 export type HeroCarouselSlide = {
   id: string;
   eyebrow: string | null;
-  title: string;
+  title: string | null;
   subtitle: string | null;
   description: string | null;
-  image_url: string;
+  media_type: "IMAGE" | "VIDEO";
+  image_url: string | null;
   image_public_id: string | null;
   mobile_image_url: string | null;
   mobile_image_public_id: string | null;
+  video_url: string | null;
+  video_public_id: string | null;
+  mobile_video_url: string | null;
+  mobile_video_public_id: string | null;
   alt_text: string | null;
   link_url: string | null;
   product_id: string | null;

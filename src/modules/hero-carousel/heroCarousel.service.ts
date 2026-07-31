@@ -14,7 +14,7 @@ export const ensureHeroCarouselSchema = async () => {
       CREATE TABLE IF NOT EXISTS hero_carousel_slides (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         eyebrow VARCHAR(120),
-        title VARCHAR(255) NOT NULL,
+        title VARCHAR(255),
         subtitle VARCHAR(255),
         description TEXT,
         image_url TEXT NOT NULL,
@@ -40,6 +40,25 @@ export const ensureHeroCarouselSchema = async () => {
         CONSTRAINT hero_carousel_autoplay_check CHECK (autoplay_seconds > 0)
       );
 
+      ALTER TABLE hero_carousel_slides
+      ALTER COLUMN title DROP NOT NULL,
+      ALTER COLUMN image_url DROP NOT NULL,
+      ADD COLUMN IF NOT EXISTS media_type VARCHAR(10) NOT NULL DEFAULT 'IMAGE',
+      ADD COLUMN IF NOT EXISTS video_url TEXT,
+      ADD COLUMN IF NOT EXISTS video_public_id TEXT,
+      ADD COLUMN IF NOT EXISTS mobile_video_url TEXT,
+      ADD COLUMN IF NOT EXISTS mobile_video_public_id TEXT;
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'hero_carousel_media_type_check'
+        ) THEN
+          ALTER TABLE hero_carousel_slides
+          ADD CONSTRAINT hero_carousel_media_type_check CHECK (media_type IN ('IMAGE', 'VIDEO'));
+        END IF;
+      END $$;
+
       CREATE INDEX IF NOT EXISTS idx_hero_carousel_active_dates
       ON hero_carousel_slides(is_active, start_date, end_date);
 
@@ -57,10 +76,15 @@ const mapHeroSlide = (row: Record<string, any>): HeroCarouselSlide => ({
   title: row.title,
   subtitle: row.subtitle ?? null,
   description: row.description ?? null,
+  media_type: row.media_type ?? "IMAGE",
   image_url: row.image_url,
   image_public_id: row.image_public_id ?? null,
   mobile_image_url: row.mobile_image_url ?? null,
   mobile_image_public_id: row.mobile_image_public_id ?? null,
+  video_url: row.video_url ?? null,
+  video_public_id: row.video_public_id ?? null,
+  mobile_video_url: row.mobile_video_url ?? null,
+  mobile_video_public_id: row.mobile_video_public_id ?? null,
   alt_text: row.alt_text ?? null,
   link_url: row.link_url ?? null,
   product_id: row.product_id ?? null,
@@ -168,6 +192,10 @@ export const createHeroSlide = async (
     imagePublicId?: string | null;
     mobileImageUrl?: string | null;
     mobileImagePublicId?: string | null;
+    videoUrl?: string | null;
+    videoPublicId?: string | null;
+    mobileVideoUrl?: string | null;
+    mobileVideoPublicId?: string | null;
   } = {}
 ) => {
   await ensureHeroCarouselSchema();
@@ -176,31 +204,44 @@ export const createHeroSlide = async (
     await assertProductExists(input.product_id);
   }
 
-  const imageUrl = extras.imageUrl ?? input.image_url;
-  if (!imageUrl) {
-    throw new Error("Hero carousel slide requires an uploaded image or image_url");
+  const mediaType = input.media_type ?? "IMAGE";
+  const imageUrl = extras.imageUrl ?? input.image_url ?? null;
+  const videoUrl = extras.videoUrl ?? input.video_url ?? null;
+
+  if (mediaType === "IMAGE" && !imageUrl) {
+    throw new Error("Image hero carousel slide requires an uploaded image or image_url");
+  }
+
+  if (mediaType === "VIDEO" && !videoUrl) {
+    throw new Error("Video hero carousel slide requires an uploaded video or video_url");
   }
 
   const result = await pool.query(
     `
     INSERT INTO hero_carousel_slides (
-      eyebrow, title, subtitle, description, image_url, image_public_id,
-      mobile_image_url, mobile_image_public_id, alt_text, link_url, product_id,
-      badge_text, accent_color, text_position, display_order, autoplay_seconds,
-      start_date, end_date, is_active, created_by
+      eyebrow, title, subtitle, description, media_type,
+      image_url, image_public_id, mobile_image_url, mobile_image_public_id,
+      video_url, video_public_id, mobile_video_url, mobile_video_public_id,
+      alt_text, link_url, product_id, badge_text, accent_color, text_position,
+      display_order, autoplay_seconds, start_date, end_date, is_active, created_by
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
     RETURNING id
     `,
     [
       input.eyebrow ?? null,
-      input.title,
+      input.title ?? null,
       input.subtitle ?? null,
       input.description ?? null,
+      mediaType,
       imageUrl,
       extras.imagePublicId ?? null,
       extras.mobileImageUrl ?? input.mobile_image_url ?? null,
       extras.mobileImagePublicId ?? null,
+      videoUrl,
+      extras.videoPublicId ?? null,
+      extras.mobileVideoUrl ?? input.mobile_video_url ?? null,
+      extras.mobileVideoPublicId ?? null,
       input.alt_text ?? null,
       input.link_url ?? null,
       input.product_id ?? null,
@@ -227,6 +268,10 @@ export const updateHeroSlide = async (
     imagePublicId?: string | null;
     mobileImageUrl?: string | null;
     mobileImagePublicId?: string | null;
+    videoUrl?: string | null;
+    videoPublicId?: string | null;
+    mobileVideoUrl?: string | null;
+    mobileVideoPublicId?: string | null;
   } = {}
 ) => {
   await ensureHeroCarouselSchema();
@@ -245,9 +290,16 @@ export const updateHeroSlide = async (
     throw new Error("end_date must be on or after start_date");
   }
 
-  const imageUrl = extras.imageUrl ?? input.image_url ?? existing.image_url;
-  if (!imageUrl) {
-    throw new Error("Hero carousel slide requires an image_url");
+  const mediaType = input.media_type ?? existing.media_type ?? "IMAGE";
+  const imageUrl = extras.imageUrl ?? input.image_url ?? existing.image_url ?? null;
+  const videoUrl = extras.videoUrl ?? input.video_url ?? existing.video_url ?? null;
+
+  if (mediaType === "IMAGE" && !imageUrl) {
+    throw new Error("Image hero carousel slide requires an image_url");
+  }
+
+  if (mediaType === "VIDEO" && !videoUrl) {
+    throw new Error("Video hero carousel slide requires a video_url");
   }
 
   await pool.query(
@@ -258,21 +310,26 @@ export const updateHeroSlide = async (
       title = COALESCE($4, title),
       subtitle = CASE WHEN $5::BOOLEAN THEN $6 ELSE subtitle END,
       description = CASE WHEN $7::BOOLEAN THEN $8 ELSE description END,
-      image_url = $9,
-      image_public_id = COALESCE($10, image_public_id),
-      mobile_image_url = CASE WHEN $11::BOOLEAN THEN $12 ELSE mobile_image_url END,
-      mobile_image_public_id = COALESCE($13, mobile_image_public_id),
-      alt_text = CASE WHEN $14::BOOLEAN THEN $15 ELSE alt_text END,
-      link_url = CASE WHEN $16::BOOLEAN THEN $17 ELSE link_url END,
-      product_id = $18,
-      badge_text = CASE WHEN $19::BOOLEAN THEN $20 ELSE badge_text END,
-      accent_color = CASE WHEN $21::BOOLEAN THEN $22 ELSE accent_color END,
-      text_position = COALESCE($23, text_position),
-      display_order = COALESCE($24, display_order),
-      autoplay_seconds = COALESCE($25, autoplay_seconds),
-      start_date = CASE WHEN $26::BOOLEAN THEN $27 ELSE start_date END,
-      end_date = CASE WHEN $28::BOOLEAN THEN $29 ELSE end_date END,
-      is_active = COALESCE($30, is_active),
+      media_type = $9,
+      image_url = $10,
+      image_public_id = COALESCE($11, image_public_id),
+      mobile_image_url = CASE WHEN $12::BOOLEAN THEN $13 ELSE mobile_image_url END,
+      mobile_image_public_id = COALESCE($14, mobile_image_public_id),
+      video_url = $15,
+      video_public_id = COALESCE($16, video_public_id),
+      mobile_video_url = CASE WHEN $17::BOOLEAN THEN $18 ELSE mobile_video_url END,
+      mobile_video_public_id = COALESCE($19, mobile_video_public_id),
+      alt_text = CASE WHEN $20::BOOLEAN THEN $21 ELSE alt_text END,
+      link_url = CASE WHEN $22::BOOLEAN THEN $23 ELSE link_url END,
+      product_id = $24,
+      badge_text = CASE WHEN $25::BOOLEAN THEN $26 ELSE badge_text END,
+      accent_color = CASE WHEN $27::BOOLEAN THEN $28 ELSE accent_color END,
+      text_position = COALESCE($29, text_position),
+      display_order = COALESCE($30, display_order),
+      autoplay_seconds = COALESCE($31, autoplay_seconds),
+      start_date = CASE WHEN $32::BOOLEAN THEN $33 ELSE start_date END,
+      end_date = CASE WHEN $34::BOOLEAN THEN $35 ELSE end_date END,
+      is_active = COALESCE($36, is_active),
       updated_at = NOW()
     WHERE id = $1
     `,
@@ -285,11 +342,17 @@ export const updateHeroSlide = async (
       input.subtitle ?? null,
       input.description !== undefined,
       input.description ?? null,
+      mediaType,
       imageUrl,
       extras.imagePublicId ?? null,
       input.mobile_image_url !== undefined || Boolean(extras.mobileImageUrl),
       extras.mobileImageUrl ?? input.mobile_image_url ?? null,
       extras.mobileImagePublicId ?? null,
+      videoUrl,
+      extras.videoPublicId ?? null,
+      input.mobile_video_url !== undefined || Boolean(extras.mobileVideoUrl),
+      extras.mobileVideoUrl ?? input.mobile_video_url ?? null,
+      extras.mobileVideoPublicId ?? null,
       input.alt_text !== undefined,
       input.alt_text ?? null,
       input.link_url !== undefined,

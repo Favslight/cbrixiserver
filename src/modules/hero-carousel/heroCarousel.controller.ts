@@ -23,6 +23,10 @@ const parseMultipartHeroSlide = async (req: FastifyRequest) => {
   let imageMime: string | null = null;
   let mobileImageBuffer: Buffer | null = null;
   let mobileImageMime: string | null = null;
+  let videoBuffer: Buffer | null = null;
+  let videoMime: string | null = null;
+  let mobileVideoBuffer: Buffer | null = null;
+  let mobileVideoMime: string | null = null;
 
   for await (const part of req.parts()) {
     if (part.type === "file") {
@@ -33,13 +37,29 @@ const parseMultipartHeroSlide = async (req: FastifyRequest) => {
       } else if (part.fieldname === "mobile_image") {
         mobileImageBuffer = buffer;
         mobileImageMime = part.mimetype;
+      } else if (part.fieldname === "video") {
+        videoBuffer = buffer;
+        videoMime = part.mimetype;
+      } else if (part.fieldname === "mobile_video") {
+        mobileVideoBuffer = buffer;
+        mobileVideoMime = part.mimetype;
       }
     } else {
       fields[part.fieldname] = String(part.value ?? "");
     }
   }
 
-  return { fields, imageBuffer, imageMime, mobileImageBuffer, mobileImageMime };
+  return {
+    fields,
+    imageBuffer,
+    imageMime,
+    mobileImageBuffer,
+    mobileImageMime,
+    videoBuffer,
+    videoMime,
+    mobileVideoBuffer,
+    mobileVideoMime
+  };
 };
 
 const uploadHeroImage = async (buffer: Buffer, mime: string | null) => {
@@ -50,6 +70,22 @@ const uploadHeroImage = async (buffer: Buffer, mime: string | null) => {
   const upload = await uploadToCloudinary(buffer, {
     folder: "cbrixi_hero_carousel",
     resourceType: "image"
+  }) as { secure_url: string; public_id: string };
+
+  return {
+    url: upload.secure_url,
+    publicId: upload.public_id
+  };
+};
+
+const uploadHeroVideo = async (buffer: Buffer, mime: string | null) => {
+  if (mime && !mime.startsWith("video/")) {
+    throw new Error("Hero carousel video uploads must be video files");
+  }
+
+  const upload = await uploadToCloudinary(buffer, {
+    folder: "cbrixi_hero_carousel",
+    resourceType: "video"
   }) as { secure_url: string; public_id: string };
 
   return {
@@ -112,6 +148,8 @@ export const createHeroSlideController = async (
     let rawBody: Record<string, unknown> = {};
     let imageUpload: { url: string; publicId: string } | null = null;
     let mobileImageUpload: { url: string; publicId: string } | null = null;
+    let videoUpload: { url: string; publicId: string } | null = null;
+    let mobileVideoUpload: { url: string; publicId: string } | null = null;
 
     if (contentType.includes("multipart/form-data")) {
       const parsed = await parseMultipartHeroSlide(req);
@@ -121,6 +159,12 @@ export const createHeroSlideController = async (
       }
       if (parsed.mobileImageBuffer) {
         mobileImageUpload = await uploadHeroImage(parsed.mobileImageBuffer, parsed.mobileImageMime);
+      }
+      if (parsed.videoBuffer) {
+        videoUpload = await uploadHeroVideo(parsed.videoBuffer, parsed.videoMime);
+      }
+      if (parsed.mobileVideoBuffer) {
+        mobileVideoUpload = await uploadHeroVideo(parsed.mobileVideoBuffer, parsed.mobileVideoMime);
       }
     } else {
       rawBody = (req.body ?? {}) as Record<string, unknown>;
@@ -132,7 +176,11 @@ export const createHeroSlideController = async (
       imageUrl: imageUpload?.url,
       imagePublicId: imageUpload?.publicId,
       mobileImageUrl: mobileImageUpload?.url,
-      mobileImagePublicId: mobileImageUpload?.publicId
+      mobileImagePublicId: mobileImageUpload?.publicId,
+      videoUrl: videoUpload?.url,
+      videoPublicId: videoUpload?.publicId,
+      mobileVideoUrl: mobileVideoUpload?.url,
+      mobileVideoPublicId: mobileVideoUpload?.publicId
     });
 
     return successResponse(reply, 201, "Hero carousel slide created successfully", { slide });
@@ -154,6 +202,8 @@ export const updateHeroSlideController = async (
     let rawBody: Record<string, unknown> = {};
     let imageUpload: { url: string; publicId: string } | null = null;
     let mobileImageUpload: { url: string; publicId: string } | null = null;
+    let videoUpload: { url: string; publicId: string } | null = null;
+    let mobileVideoUpload: { url: string; publicId: string } | null = null;
 
     if (contentType.includes("multipart/form-data")) {
       const parsed = await parseMultipartHeroSlide(req);
@@ -164,6 +214,12 @@ export const updateHeroSlideController = async (
       if (parsed.mobileImageBuffer) {
         mobileImageUpload = await uploadHeroImage(parsed.mobileImageBuffer, parsed.mobileImageMime);
       }
+      if (parsed.videoBuffer) {
+        videoUpload = await uploadHeroVideo(parsed.videoBuffer, parsed.videoMime);
+      }
+      if (parsed.mobileVideoBuffer) {
+        mobileVideoUpload = await uploadHeroVideo(parsed.mobileVideoBuffer, parsed.mobileVideoMime);
+      }
     } else {
       rawBody = (req.body ?? {}) as Record<string, unknown>;
     }
@@ -173,7 +229,11 @@ export const updateHeroSlideController = async (
       imageUrl: imageUpload?.url,
       imagePublicId: imageUpload?.publicId,
       mobileImageUrl: mobileImageUpload?.url,
-      mobileImagePublicId: mobileImageUpload?.publicId
+      mobileImagePublicId: mobileImageUpload?.publicId,
+      videoUrl: videoUpload?.url,
+      videoPublicId: videoUpload?.publicId,
+      mobileVideoUrl: mobileVideoUpload?.url,
+      mobileVideoPublicId: mobileVideoUpload?.publicId
     });
 
     return successResponse(reply, 200, "Hero carousel slide updated successfully", { slide });
