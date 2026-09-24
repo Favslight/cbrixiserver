@@ -17,11 +17,14 @@ import { notificationRoutes } from "./modules/notifications/notification.routes"
 import { campaignRoutes } from "./modules/campaigns/campaign.routes";
 import { receiptRoutes } from "./modules/receipts/receipt.routes";
 import { heroCarouselRoutes } from "./modules/hero-carousel/heroCarousel.routes";
+import { marketplaceRoutes } from "./modules/marketplace/marketplace.routes";
+import { installmentRoutes } from "./modules/installments/installment.routes";
 import { ensureAdminNotificationSchema } from "./modules/admin-notifications/adminNotification.service";
 import { ensureSupportSchema } from "./modules/support/support.service";
 import { ensureCampaignSchema } from "./modules/campaigns/campaign.service";
 import { ensureReceiptSchema } from "./modules/receipts/receipt.service";
 import { ensureHeroCarouselSchema } from "./modules/hero-carousel/heroCarousel.service";
+import { ensureMarketplaceSchema } from "./modules/marketplace/marketplace.service";
 
 export const app = Fastify ({
     logger : true,
@@ -34,6 +37,7 @@ ensureSupportSchema().catch((error) => app.log.error(error));
 ensureCampaignSchema().catch((error) => app.log.error(error));
 ensureReceiptSchema().catch((error) => app.log.error(error));
 ensureHeroCarouselSchema().catch((error) => app.log.error(error));
+ensureMarketplaceSchema().catch((error) => app.log.error(error));
 
 app.addContentTypeParser(
   "application/json",
@@ -160,3 +164,5 @@ app.register(notificationRoutes);
 app.register(campaignRoutes);
 app.register(heroCarouselRoutes);
 app.register(receiptRoutes);
+app.register(marketplaceRoutes);
+app.register(installmentRoutes);

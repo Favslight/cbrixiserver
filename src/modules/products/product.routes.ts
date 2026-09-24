@@ -2,6 +2,7 @@
 import { FastifyInstance } from "fastify";
 import { bulkUpdateProductPurchaseSettingsController, createProductController, deleteProductController, getAdminProductController, getProductsController, getPublicProductsByCategoryController, getPublicProductsController, markProductInStockController, markProductOutOfStockController, previewProductDiscountController, reorderHomepageProductsController, updateProductController } from "./product.controller";
 import { requireAdmin } from "../admin/admin.auth";
+import { requireMarketplaceOpen } from "../marketplace/marketplace.guard";
 
 export async function productRoutes(app: FastifyInstance) {
 
@@ -55,6 +56,6 @@ export async function productRoutes(app: FastifyInstance) {
     updateProductController
   );
 
-  app.get("/products/category/:category", getPublicProductsByCategoryController);
-  app.get("/products", getPublicProductsController);
+  app.get<{ Params: { category: string } }>("/products/category/:category", { preHandler: [requireMarketplaceOpen] }, getPublicProductsByCategoryController);
+  app.get("/products", { preHandler: [requireMarketplaceOpen] }, getPublicProductsController);
 };

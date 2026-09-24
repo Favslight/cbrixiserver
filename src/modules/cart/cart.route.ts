@@ -7,12 +7,13 @@ import {
   updateCartItemController
 } from "./cart.controller";
 import { requireUser } from "../auth/user.auth";
+import { requireMarketplaceOpen } from "../marketplace/marketplace.guard";
 
 export const cartRoutes = async (app: FastifyInstance) => {
 
   app.post(
     "/cart/add",
-    { preHandler: [requireUser] },
+    { preHandler: [requireUser, requireMarketplaceOpen] },
     addToCartController
   );
 

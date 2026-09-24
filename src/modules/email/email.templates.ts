@@ -94,7 +94,36 @@ This is a reminder that your installment payment of ${money(amount)} is due on $
 Please make payment before the due date to avoid penalties.
 `;
 
-export const resetPasswordTemplate = (firstname: string, resetLink: string) => `
+export const installmentOverdueTemplate = (
+  name: string,
+  missed: {
+    orderRef: string;
+    installmentNumber: number;
+    amount: number;
+    dueDate: string;
+    daysOverdue: number;
+  }[],
+  totalOverdue: number
+) => `
+Hello ${name},
+
+Our records show that the following installment payment${missed.length === 1 ? " has" : "s have"} been missed:
+
+${missed
+  .map(
+    (item) =>
+      `Order #${item.orderRef}, Installment ${item.installmentNumber}: ${money(item.amount)} (due ${item.dueDate}, ${item.daysOverdue} ${item.daysOverdue === 1 ? "day" : "days"} overdue)`
+  )
+  .join("\n")}
+
+Total overdue: ${money(totalOverdue)}
+
+Please log in to your Cbrixi dashboard and make payment as soon as possible to avoid penalties.
+
+If you have already paid, please ignore this email or contact support so we can update your record.
+`;
+
+export const resetPasswordTemplate =(firstname: string, resetLink: string) => `
 Hello ${firstname},
 
 We received a request to reset your Cbrixi password.
