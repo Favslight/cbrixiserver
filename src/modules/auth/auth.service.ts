@@ -364,9 +364,8 @@ export const deleteUserAccount = async (userId: string) => {
   try {
     await client.query("BEGIN");
 
-    // Optional: ensure user exists
     const check = await client.query(
-      `SELECT id FROM users WHERE id = $1`,
+      `SELECT id FROM users WHERE id = $1 FOR UPDATE`,
       [userId]
     );
 
@@ -374,7 +373,55 @@ export const deleteUserAccount = async (userId: string) => {
       throw new Error("User not found");
     }
 
-    // Delete user (wallets, game history etc cascade if FK set)
+    await client.query(
+      `DELETE FROM referral_rewards
+       WHERE referrer_id = $1 OR referred_user_id = $1`,
+      [userId]
+    );
+
+    await client.query(
+      `DELETE FROM referral_payout_requests WHERE user_id = $1`,
+      [userId]
+    );
+
+    await client.query(
+      `UPDATE users
+       SET referred_by_user_id = NULL,
+           updated_at = NOW()
+       WHERE referred_by_user_id = $1`,
+      [userId]
+    );
+
+    await client.query(
+      `DELETE FROM receipts WHERE customer_id = $1`,
+      [userId]
+    );
+
+    await client.query(
+      `DELETE FROM payment_transactions WHERE user_id = $1`,
+      [userId]
+    );
+
+    await client.query(
+      `DELETE FROM orders WHERE user_id = $1`,
+      [userId]
+    );
+
+    await client.query(
+      `DELETE FROM default_events WHERE user_id = $1`,
+      [userId]
+    );
+
+    await client.query(
+      `DELETE FROM email_logs WHERE user_id = $1`,
+      [userId]
+    );
+
+    await client.query(
+      `UPDATE campaign_views SET user_id = NULL WHERE user_id = $1`,
+      [userId]
+    );
+
     await client.query(
       `DELETE FROM users WHERE id = $1`,
       [userId]

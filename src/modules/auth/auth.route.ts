@@ -6,7 +6,8 @@ import {
   getUserById,
   logoutUser,
   forgotPassword,
-  resetPassword
+  resetPassword,
+  deleteUserAccount
 } from "./auth.service";
 
 export const authRoutes = async (app: FastifyInstance) => {
@@ -99,6 +100,27 @@ app.post(
   { preHandler: [app.authenticate] },
   async () => {
     return logoutUser();
+  }
+);
+
+app.delete(
+  "/account",
+  { preHandler: [app.authenticate] },
+  async (request, reply) => {
+    try {
+      const userId = request.user.id;
+      const result = await deleteUserAccount(userId);
+
+      return reply.send({
+        success: true,
+        ...result
+      });
+    } catch (error: any) {
+      return reply.code(error.message === "User not found" ? 404 : 400).send({
+        success: false,
+        message: error.message
+      });
+    }
   }
 );
 }
